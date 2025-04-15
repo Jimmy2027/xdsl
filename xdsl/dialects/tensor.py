@@ -33,6 +33,7 @@ from xdsl.irdl import (
     traits_def,
     var_operand_def,
 )
+from xdsl.irdl.constraints import AnyAttr, EqAttrConstraint
 from xdsl.parser import Parser
 from xdsl.printer import Printer
 from xdsl.traits import NoMemoryEffect
@@ -294,6 +295,23 @@ class ReshapeOp(IRDLOperation):
 
 
 @irdl_op_definition
+class ExpandShapeOp(IRDLOperation):
+    """operation to produce a tensor with a higher rank"""
+
+    name = "tensor.expand_shape"
+
+    src = operand_def(TensorType)
+
+    reassociation = prop_def(AnyAttr())
+
+    output_shape = var_operand_def(EqAttrConstraint(IndexType()))
+
+    static_output_shape = prop_def(AnyAttr())
+
+    result = result_def(AnyAttr())
+
+
+@irdl_op_definition
 class ExtractSliceOp(IRDLOperation):
     name = "tensor.extract_slice"
 
@@ -525,6 +543,7 @@ Tensor = Dialect(
         CastOp,
         DimOp,
         EmptyOp,
+        ExpandShapeOp,
         ExtractSliceOp,
         InsertSliceOp,
         ReshapeOp,
