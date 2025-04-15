@@ -407,6 +407,23 @@ class ExpandShapeOp(IRDLOperation):
         printer.print_string(" into ")
         printer.print_attribute(self.result.type)
 
+    def print(self, printer: Printer):
+        printer.print(" ")
+        printer.print_ssa_value(self.src)
+        printer.print(" ")
+        printer.print_attribute(self.reassociation)
+        printer.print(" output_shape ")
+        print_dynamic_index_list(
+            printer,
+            self.DYNAMIC_INDEX,
+            self.dynamic_output_shape,
+            (cast(int, i) for i in self.output_shape.get_values()),
+        )
+        printer.print(" : ")
+        printer.print_attribute(self.src.type)
+        printer.print(" into ")
+        printer.print_attribute(self.result.type)
+
 
 @irdl_op_definition
 class ExtractSliceOp(IRDLOperation):
