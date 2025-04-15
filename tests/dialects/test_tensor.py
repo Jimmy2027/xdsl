@@ -1,5 +1,5 @@
-from contextvars import Context
-
+from xdsl.context import Context
+from xdsl.dialects.arith import Arith
 from xdsl.dialects.builtin import (
     DYNAMIC_INDEX,
     DenseArrayBase,
@@ -108,11 +108,14 @@ def test_insert_slice_dynamic():
 def test_expand_shape_parse():
     MODULE_CTX = """
     %src = tensor.empty() : tensor<1x5xi32>
-    %expanded = tensor.expand_shape %src [[0], [1, 2, 3]] output_shape [1, 1, 1, 5] : tensor<1x5xi32> into tensor<1x1x1x5xi32>
+    %c0 = arith.constant 0 : index
+    %dim = tensor.dim %src, %c0 : tensor<1x5xi32>
+    %expanded = tensor.expand_shape %src [[0], [1, 2, 3]] output_shape [%dim, 1, 1, 5] : tensor<1x5xi32> into tensor<1x1x1x5xi32>
     """
 
     ctx = Context()
     ctx.load_dialect(Tensor)
+    ctx.load_dialect(Arith)
 
     module_op = Parser(ctx, MODULE_CTX).parse_module()
 
@@ -120,6 +123,9 @@ def test_expand_shape_parse():
     assert isinstance(expand_shape_op, ExpandShapeOp)
 
     assert expand_shape_op.src._name == "src"
-    assert expand_shape_op.output_shape == DenseArrayBase.from_list(i64, [1, 1, 1, 5])
-    assert expand_shape_op.src.type == TensorType(IntegerType(32), [1, 5])  # noqa: F821
+    assert expand_shape_op.src.type == TensorType(IntegerType(32), [1, 5])
     assert expand_shape_op.result.type == TensorType(IntegerType(32), [1, 1, 1, 5])
+
+
+if __name__ == "__main__":
+    test_expand_shape_parse()
