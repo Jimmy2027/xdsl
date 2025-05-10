@@ -1,5 +1,5 @@
 from math import copysign, isnan
-from typing import cast
+from typing import Any, cast
 
 from xdsl.dialects import arith, builtin
 from xdsl.dialects.builtin import FloatAttr, IntegerAttr
@@ -40,6 +40,7 @@ def _truncate(value: int, to_bitwidth: int) -> int:
     return truncated
 
 
+# check 58c548261cd4a5f1e0d127ae1b38a2d2b4420136
 @register_impls
 class ArithFunctions(InterpreterFunctions):
     @impl(arith.ConstantOp)
@@ -47,10 +48,26 @@ class ArithFunctions(InterpreterFunctions):
         self, interpreter: Interpreter, op: arith.ConstantOp, args: PythonValues
     ) -> PythonValues:
         interpreter.interpreter_assert(
-            isinstance(op.value, IntegerAttr | FloatAttr),
+            isattr(
+                op.value,
+                IntegerAttr | FloatAttr | DenseIntOrFPElementsAttr,
+            ),
             f"arith.constant not implemented for {type(op.value)}",
         )
+        if isinstance(value, DenseIntOrFPElementsAttr):
+            shape = list(value.get_shape())
+            return (
+                ShapedArray(
+                    TypedPtr[Any](
+                        raw=RawPtr(bytearray(value.data.data)),
+                        xtype=value.get_element_type(),
+                    ),
+                    shape,
+                ),
+            )
+
         value = cast(IntegerAttr, op.value)
+
         return (value.value.data,)
 
     @impl(arith.SubiOp)
