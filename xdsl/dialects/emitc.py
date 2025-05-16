@@ -664,13 +664,14 @@ def _generate_affine_loops_for_subview_copy(
     if rank == 0:
         return []
 
-    loop_iv_ssas: list[SSAValue | OpResult] = [const_zero_ssa] * rank
+    # Only allow SSAValue in loop_iv_ssas
+    loop_iv_ssas: list[SSAValue] = [const_zero_ssa] * rank
 
     def build_loops_recursive(current_dim: int) -> list[IRDLOperation]:
         if current_dim == rank:
             ops_for_body: list[IRDLOperation] = []
 
-            source_indices_ssas: list[SSAValue | OpResult] = [const_zero_ssa] * rank
+            source_indices_ssas: list[SSAValue] = [const_zero_ssa] * rank
             for k_idx in range(rank):
                 ivk_mul_stridek_op = arith.MuliOp(
                     loop_iv_ssas[k_idx],
@@ -684,7 +685,7 @@ def _generate_affine_loops_for_subview_copy(
                     result_type=iv_type,
                 )
                 ops_for_body.append(src_idx_k_op)
-                source_indices_ssas[k_idx] = src_idx_k_op.results[0]
+                source_indices_ssas[k_idx] = SSAValue.get(src_idx_k_op.results[0])
 
             load_op = MemrefLoadOp.get(
                 ref=source_memref_ssa, indices=source_indices_ssas
@@ -692,24 +693,27 @@ def _generate_affine_loops_for_subview_copy(
             ops_for_body.append(load_op)
             loaded_value_ssa = load_op.results[0]
 
+            # Ensure all loop_iv_ssas are SSAValue, not OpResult
+            store_indices = [SSAValue.get(iv) for iv in loop_iv_ssas]
             store_op = MemrefStoreOp.build(
-                operands=[loaded_value_ssa, dest_memref_ssa, loop_iv_ssas]
+                operands=[loaded_value_ssa, dest_memref_ssa, store_indices]
             )
             ops_for_body.append(store_op)
 
             return ops_for_body
 
         for_op = affine.ForOp.from_region(
-            lower_bound=const_zero_ssa,
-            upper_bound=subview_sizes_ssas[current_dim],
-            step=const_one_ssa,
+            lower_bound=const_zero_ssa.op.value.value.data,
+            upper_bound=subview_sizes_ssas[current_dim].op.value.value.data,
+            step=1,
             region=Region(Block(arg_types=[iv_type])),
             inits=[loop_iv_ssas[current_dim]],
-            lowerBoundOperands=[],
-            upperBoundOperands=[],
+            lowerBoundOperands=[const_zero_ssa],
+            upperBoundOperands=[subview_sizes_ssas[current_dim]],
             result_types=[],
         )
-        loop_iv_ssas[current_dim] = for_op.regions[0].blocks[0].args[0]
+        # Always wrap as SSAValue
+        loop_iv_ssas[current_dim] = SSAValue.get(for_op.regions[0].blocks[0].args[0])
 
         inner_ops = build_loops_recursive(current_dim + 1)
         for_op.regions[0].blocks[0].add_ops(inner_ops)
