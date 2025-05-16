@@ -748,7 +748,10 @@ def lower_subview_to_affine_loops(
         )
 
     alloc_op = MemrefAllocOp.get(
-        return_type=dest_memref_type, dynamic_sizes=[], alignment=None
+        return_type=dest_memref_type.element_type,
+        dynamic_sizes=[],
+        alignment=None,
+        shape=dest_memref_type.shape,
     )
     insertion_block.add_op(alloc_op)
     dest_memref_ssa = alloc_op.results[0]

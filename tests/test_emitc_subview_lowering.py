@@ -56,7 +56,6 @@ def test_convert_memref_subview_to_emitc():
     i8 = i8_type
 
     source_shape = [16, 8]
-    source_memref_type = MemRefType(i8, source_shape)
 
     static_offsets = [0, 0]
     static_sizes = [8, 4]
@@ -67,13 +66,13 @@ def test_convert_memref_subview_to_emitc():
     module = ModuleOp(region)
     ctx = Context(True)
 
-    alloc_op = memref.AllocOp.get(return_type=source_memref_type, dynamic_sizes=[])
+    alloc_op = memref.AllocOp.get(return_type=i8, dynamic_sizes=[], shape=source_shape)
     temp_block.add_op(alloc_op)
     source_memref_ssa = alloc_op.results[0]
 
     subview_op = memref.SubviewOp.from_static_parameters(
         source_memref_ssa,
-        source_memref_type,
+        alloc_op.memref.type,
         static_offsets,
         static_sizes,
         static_strides,
