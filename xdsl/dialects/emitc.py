@@ -11,8 +11,6 @@ import abc
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Generic, Literal
 
-from typing_extensions import TypeVar
-
 from xdsl.dialects.builtin import (
     ArrayAttr,
     BFloat16Type,
@@ -31,16 +29,13 @@ from xdsl.dialects.builtin import (
     TensorType,
     TupleType,
 )
+
+# Use this alias for xdsl.ir.TypeAttribute in type hints within functions
 from xdsl.ir import (
     Attribute,
     BlockArgument,
     Dialect,
-    ParametrizedAttribute,
     SSAValue,
-    TypeAttribute,
-)
-from xdsl.irdl import (
-    AnyAttr,
     AttrConstraint,
     ConstraintContext,
     IntConstraint,

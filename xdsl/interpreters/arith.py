@@ -2,7 +2,7 @@ from math import copysign, isnan
 from typing import Any, cast
 
 from xdsl.dialects import arith, builtin
-from xdsl.dialects.builtin import FloatAttr, IntegerAttr
+from xdsl.dialects.builtin import IntegerAttr
 from xdsl.interpreter import (
     Interpreter,
     InterpreterFunctions,
@@ -47,13 +47,14 @@ class ArithFunctions(InterpreterFunctions):
     def run_constant(
         self, interpreter: Interpreter, op: arith.ConstantOp, args: PythonValues
     ) -> PythonValues:
-        interpreter.interpreter_assert(
-            isattr(
-                op.value,
-                IntegerAttr | FloatAttr | DenseIntOrFPElementsAttr,
-            ),
-            f"arith.constant not implemented for {type(op.value)}",
-        )
+        # interpreter.interpreter_assert(
+        #     isattr(
+        #         op.value,
+        #         IntegerAttr | FloatAttr | DenseIntOrFPElementsAttr,
+        #     ),
+        #     f"arith.constant not implemented for {type(op.value)}",
+        # )
+        value = op.value
         if isinstance(value, DenseIntOrFPElementsAttr):
             shape = list(value.get_shape())
             return (
