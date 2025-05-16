@@ -10,28 +10,52 @@ See external [documentation](https://mlir.llvm.org/docs/Dialects/EmitC/).
 from collections.abc import Iterable
 from typing import cast
 
+from xdsl.dialects import arith  # For arith.ConstantOp
 from xdsl.dialects.builtin import (
     ArrayAttr,
     BFloat16Type,
     ContainerType,
+    DenseArrayBase,
     Float16Type,
     Float32Type,
     Float64Type,
     IndexType,
     IntAttr,
     IntegerType,
+    MemRefType,
     ShapedType,
     TensorType,
     TupleType,
+    UnrealizedConversionCastOp,
 )
+from xdsl.dialects.memref import SubviewOp
 from xdsl.ir import (
     Attribute,
     AttributeCovT,
+    Block,
     Dialect,
+    OpResult,
     ParametrizedAttribute,
-    TypeAttribute,
+    Region,
+    SSAValue,
+    TypeAttribute,  # Keep original name for class definitions
 )
-from xdsl.irdl import irdl_attr_definition
+
+# Use this alias for xdsl.ir.TypeAttribute in type hints within functions
+from xdsl.ir import TypeAttribute as IRTypeAttribute
+from xdsl.irdl import (
+    AnyAttr,
+    AnyOf,
+    BaseAttr,
+    IRDLOperation,
+    irdl_attr_definition,
+    irdl_op_definition,
+    operand_def,
+    opt_prop_def,
+    prop_def,
+    region_def,
+    result_def,
+)
 from xdsl.parser import AttrParser
 from xdsl.printer import Printer
 from xdsl.utils.exceptions import VerifyException
@@ -137,8 +161,6 @@ class EmitC_LValueType(ParametrizedAttribute, TypeAttribute):
             )
         if isinstance(self.value_type, EmitC_ArrayType):
             raise VerifyException("!emitc.lvalue cannot wrap !emitc.array type")
-
-
 
 
 @irdl_attr_definition
@@ -489,11 +511,18 @@ class EmitC_FileOp(IRDLOperation):
 @irdl_op_definition
 class EmitC_ForOp(IRDLOperation):
     name = "emitc.for"
+    lower_bound = operand_def(AnyAttr())
+    upper_bound = operand_def(AnyAttr())
+    step = operand_def(AnyAttr())
+    body: Region = region_def("single_block")
 
 
 @irdl_op_definition
 class EmitC_FuncOp(IRDLOperation):
     name = "emitc.func"
+    sym_name: SymbolNameAttr = prop_def(SymbolNameAttr)
+    function_type = prop_def(AnyAttr())
+    body: Region = region_def("single_block")
 
 
 @irdl_op_definition
@@ -607,6 +636,171 @@ class EmitC_VerbatimOp(IRDLOperation):
 @irdl_op_definition
 class EmitC_YieldOp(IRDLOperation):
     name = "emitc.yield"
+
+
+def _generate_emitc_nested_loops_for_copy(
+    source_base: SSAValue,
+    dest_base: SSAValue,
+    element_type: IRTypeAttribute,
+    offsets: list[SSAValue],
+    sizes: list[SSAValue],
+    strides: list[SSAValue],
+    iv_type: IRTypeAttribute,
+    const_zero_ssa: SSAValue,
+    const_one_ssa: SSAValue,
+) -> list[IRDLOperation]:
+    """
+    Generates a list of emitc operations to perform a copy equivalent to a
+    memref.subview's data movement.
+
+    Args:
+        source_base: SSAValue for the source memref (expected to be an emitc type).
+        dest_base: SSAValue for the destination memref (expected to be an emitc type).
+        element_type: The scalar element TypeAttribute of the memref.
+        offsets: List of SSAValues for the subview offsets.
+        sizes: List of SSAValues for the subview sizes (loop bounds).
+        strides: List of SSAValues for the subview strides.
+        iv_type: The TypeAttribute for loop induction variables.
+        const_zero_ssa: SSAValue for the constant 0 of iv_type.
+        const_one_ssa: SSAValue for the constant 1 of iv_type.
+    """
+    rank = len(sizes)
+    if rank == 0:
+        return []
+
+    iv_ssas: list[SSAValue | OpResult] = [source_base] * rank
+
+    def build_loops_recursive(current_dim: int) -> list[IRDLOperation]:
+        if current_dim == rank:
+            ops_for_assignment_body: list[IRDLOperation] = []
+            source_indices_ssas_local: list[SSAValue | OpResult] = [source_base] * rank
+            for k_idx in range(rank):
+                ivk_mul_stridek_op = arith.MuliOp(
+                    iv_ssas[k_idx],
+                    strides[k_idx],
+                    result_type=iv_type,
+                )
+                ops_for_assignment_body.append(ivk_mul_stridek_op)
+                src_idx_k_op = arith.AddiOp(
+                    offsets[k_idx],
+                    ivk_mul_stridek_op.results[0],
+                    result_type=iv_type,
+                )
+                ops_for_assignment_body.append(src_idx_k_op)
+                source_indices_ssas_local[k_idx] = src_idx_k_op.results[0]
+            current_rhs_val_ssa: SSAValue | OpResult = source_base
+            for k_idx in range(rank):
+                res_type_rhs: IRTypeAttribute
+                if k_idx == rank - 1:
+                    res_type_rhs = element_type
+                else:
+                    res_type_rhs = EmitC_PointerType(element_type)
+                subscript_op = EmitC_SubscriptOp.build(
+                    operands=[current_rhs_val_ssa, source_indices_ssas_local[k_idx]],
+                    result_types=[[res_type_rhs]],
+                )
+                ops_for_assignment_body.append(subscript_op)
+                current_rhs_val_ssa = subscript_op.results[0]
+            current_lhs_lvalue_ssa: SSAValue | OpResult = dest_base
+            lvalue_of_element_type = EmitC_LValueType(element_type)
+            for k_idx in range(rank):
+                res_type_lhs: IRTypeAttribute
+                if k_idx == rank - 1:
+                    res_type_lhs = lvalue_of_element_type
+                else:
+                    res_type_lhs = EmitC_PointerType(element_type)
+                subscript_op = EmitC_SubscriptOp.build(
+                    operands=[current_lhs_lvalue_ssa, iv_ssas[k_idx]],
+                    result_types=[[res_type_lhs]],
+                )
+                ops_for_assignment_body.append(subscript_op)
+                current_lhs_lvalue_ssa = subscript_op.results[0]
+            assign_op = EmitC_AssignOp.build(
+                operands=[current_rhs_val_ssa],
+                properties={"var": current_lhs_lvalue_ssa.type},
+                result_types=[],
+            )
+            ops_for_assignment_body.append(assign_op)
+            return ops_for_assignment_body
+
+        for_op = EmitC_ForOp.build(
+            operands=[const_zero_ssa, sizes[current_dim], const_one_ssa],
+            regions=[Region([Block(arg_types=[iv_type])])],  # type: ignore
+        )
+        iv_ssas[current_dim] = for_op.regions[0].blocks[0].args[0]
+        inner_ops = build_loops_recursive(current_dim + 1)
+        for_op.regions[0].blocks[0].add_ops(inner_ops)
+        return [for_op]
+
+    final_ops = build_loops_recursive(0)
+    return final_ops
+
+
+def generate_emitc_subview_copy_ops(
+    subview_op: SubviewOp,
+    dest_emitc_array_ssa: SSAValue,  # SSAValue of EmitC_ArrayType for the destination
+    insertion_block: Block,
+) -> list[IRDLOperation]:
+    """
+    Generates emitc operations to perform a copy equivalent to a memref.subview.
+    Prerequisite ops (casts, constants) are inserted into insertion_block.
+    Returns the list of loop ops, which should also be added to insertion_block by the caller.
+    """
+    source_memref_val = subview_op.source
+    if not isinstance(source_memref_val.type, MemRefType):
+        raise TypeError("Subview source is not a MemRefType")
+    source_memref_type: MemRefType = source_memref_val.type
+
+    # 1. Cast source memref to EmitC_ArrayType
+    emitc_source_type = EmitC_ArrayType(
+        source_memref_type.get_shape(), source_memref_type.element_type
+    )
+    cast_source_op = UnrealizedConversionCastOp.build(
+        operands=[source_memref_val], result_types=[[emitc_source_type]]
+    )
+    insertion_block.add_op(cast_source_op)
+    emitc_source_ssa = SSAValue.get(cast_source_op.results[0])
+
+    element_type = source_memref_type.element_type
+    iv_type = IndexType()
+
+    # 2. Create constants for 0 and 1
+    const_zero_op = arith.ConstantOp.from_int_and_width(0, iv_type)
+    const_one_op = arith.ConstantOp.from_int_and_width(1, iv_type)
+    insertion_block.add_ops([const_zero_op, const_one_op])
+    const_zero_ssa = SSAValue.get(const_zero_op.results[0])
+    const_one_ssa = SSAValue.get(const_one_op.results[0])
+
+    # 3. Extract offsets, sizes, strides from SubviewOp and create constants
+    def attr_to_ssas(attr: Attribute, op_name: str) -> list[SSAValue]:
+        if not isinstance(attr, DenseArrayBase):
+            raise TypeError(
+                f"Subview {op_name} is not a DenseIntElementsAttr for static extraction. Dynamic not supported here."
+            )
+        ssas: list[SSAValue] = []
+
+        for val in attr.iter_values():
+            const_op = arith.ConstantOp.from_int_and_width(val, iv_type)
+            insertion_block.add_op(const_op)
+            ssas.append(SSAValue.get(const_op.results[0]))
+        return ssas
+
+    offsets_ssas = attr_to_ssas(subview_op.static_offsets, "static_offsets")
+    sizes_ssas = attr_to_ssas(subview_op.static_sizes, "static_sizes")
+    strides_ssas = attr_to_ssas(subview_op.static_strides, "static_strides")
+
+    # 4. Call the loop generation logic
+    return _generate_emitc_nested_loops_for_copy(
+        source_base=emitc_source_ssa,
+        dest_base=dest_emitc_array_ssa,
+        element_type=element_type,
+        offsets=offsets_ssas,
+        sizes=sizes_ssas,
+        strides=strides_ssas,
+        iv_type=iv_type,
+        const_zero_ssa=const_zero_ssa,
+        const_one_ssa=const_one_ssa,
+    )
 
 
 EmitC = Dialect(
