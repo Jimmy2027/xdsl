@@ -699,9 +699,12 @@ def _generate_affine_loops_for_subview_copy(
 
             return ops_for_body
 
-        for_op = affine.ForOp.build(
-            operands=[const_zero_ssa, subview_sizes_ssas[current_dim], const_one_ssa],
-            regions=[Region(Block(arg_types=[iv_type]))],
+        for_op = affine.ForOp.from_region(
+            lower_bound=const_zero_ssa,
+            upper_bound=subview_sizes_ssas[current_dim],
+            step=const_one_ssa,
+            region=Region(Block(arg_types=[iv_type])),
+            inits=[loop_iv_ssas[current_dim]],
         )
         loop_iv_ssas[current_dim] = for_op.regions[0].blocks[0].args[0]
 
@@ -754,7 +757,6 @@ def lower_subview_to_affine_loops(
             raise NotImplementedError(
                 f"Dynamic {attr_name} not supported by this lowering yet."
             )
-
         ssas: list[SSAValue] = []
         for val in attr.iter_values():
             const_op = arith.ConstantOp.from_int_and_width(val, iv_type)

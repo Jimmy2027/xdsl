@@ -25,11 +25,6 @@ from xdsl.ir import Attribute, Block  # Added Attribute for type checking
 from xdsl.printer import Printer
 
 
-def _is_dense_int_elements_attr(attr: Attribute) -> bool:
-    """Helper to check if an attribute is a DenseIntElementsAttr."""
-    return isinstance(attr, DenseIntElementsAttr)
-
-
 def test_convert_memref_subview_to_emitc():
     i8 = i8_type
     idx_type = IndexType()
@@ -41,9 +36,7 @@ def test_convert_memref_subview_to_emitc():
     static_sizes = [8, 4]
     static_strides = [1, 1]
 
-    dest_emitc_array_type = EmitC_ArrayType(static_sizes, i8)
-    insertion_block = Block(arg_types=[dest_emitc_array_type])
-    dest_emitc_array_ssa = insertion_block.args[0]
+    insertion_block = Block(arg_types=[source_memref_type])
 
     temp_block = Block()
     alignment_attr = IntegerAttr(0, idx_type)
