@@ -686,8 +686,8 @@ def _generate_affine_loops_for_subview_copy(
                 ops_for_body.append(src_idx_k_op)
                 source_indices_ssas[k_idx] = src_idx_k_op.results[0]
 
-            load_op = MemrefLoadOp.build(
-                operands=[source_memref_ssa, source_indices_ssas]
+            load_op = MemrefLoadOp.get(
+                ref=source_memref_ssa, indices=source_indices_ssas
             )
             ops_for_body.append(load_op)
             loaded_value_ssa = load_op.results[0]
@@ -705,6 +705,9 @@ def _generate_affine_loops_for_subview_copy(
             step=const_one_ssa,
             region=Region(Block(arg_types=[iv_type])),
             inits=[loop_iv_ssas[current_dim]],
+            lowerBoundOperands=[],
+            upperBoundOperands=[],
+            result_types=[],
         )
         loop_iv_ssas[current_dim] = for_op.regions[0].blocks[0].args[0]
 
