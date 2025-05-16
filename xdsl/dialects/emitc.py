@@ -10,7 +10,7 @@ See external [documentation](https://mlir.llvm.org/docs/Dialects/EmitC/).
 from collections.abc import Iterable
 from typing import cast
 
-from xdsl.dialects import affine, arith
+from xdsl.dialects import arith, scf
 from xdsl.dialects.builtin import (
     ArrayAttr,
     BFloat16Type,
@@ -657,7 +657,7 @@ def _generate_affine_loops_for_subview_copy(
     const_one_ssa: SSAValue,
 ) -> list[IRDLOperation]:
     """
-    Generates a list of affine.for, arith, memref.load, memref.store operations
+    Generates a list of scf.for, arith, memref.load, memref.store operations
     to perform a copy from a source memref (based on subview parameters) to a destination memref.
     """
     rank = len(subview_sizes_ssas)
@@ -702,21 +702,26 @@ def _generate_affine_loops_for_subview_copy(
 
             return ops_for_body
 
-        for_op = affine.ForOp.from_region(
-            lower_bound=const_zero_ssa.op.value.value.data,
-            upper_bound=subview_sizes_ssas[current_dim].op.value.value.data,
-            step=1,
-            region=Region(Block(arg_types=[iv_type])),
-            inits=[loop_iv_ssas[current_dim]],
-            lowerBoundOperands=[const_zero_ssa],
-            upperBoundOperands=[subview_sizes_ssas[current_dim]],
-            result_types=[],
+        # Create the body for scf.ForOp
+        # The block takes the induction variable.
+        body_block = Block(arg_types=[iv_type])
+        body_region = Region(body_block)
+
+        for_op = scf.ForOp(
+            lb=const_zero_ssa,
+            ub=subview_sizes_ssas[current_dim],
+            step=const_one_ssa,
+            iter_args=[],
+            body=body_region,
         )
-        # Always wrap as SSAValue
-        loop_iv_ssas[current_dim] = SSAValue.get(for_op.regions[0].blocks[0].args[0])
+        # The new loop's induction variable is the first (and only) argument of the body block
+        current_loop_iv = body_block.args[0]
+        loop_iv_ssas[current_dim] = SSAValue.get(current_loop_iv)
 
         inner_ops = build_loops_recursive(current_dim + 1)
-        for_op.regions[0].blocks[0].add_ops(inner_ops)
+        body_block.add_ops(inner_ops)
+        # Add scf.YieldOp at the end of the body block
+        body_block.add_op(scf.YieldOp())
         return [for_op]
 
     final_loop_ops = build_loops_recursive(0)

@@ -1,9 +1,6 @@
 from xdsl.context import Context
 from xdsl.dialects import memref
 from xdsl.dialects.builtin import (
-    IndexType,  # Re-imported for explicit alignment
-    IntegerAttr,
-    MemRefType,
     ModuleOp,
 )
 from xdsl.dialects.builtin import (
@@ -12,8 +9,10 @@ from xdsl.dialects.builtin import (
 from xdsl.dialects.emitc import (
     lower_subview_to_affine_loops,
 )
-from xdsl.ir import Block  # Added Attribute for type checking
-from xdsl.ir.core import Region
+from xdsl.ir import (
+    Block,
+    Region,
+)
 from xdsl.passes import ModulePass
 from xdsl.pattern_rewriter import (
     PatternRewriter,
