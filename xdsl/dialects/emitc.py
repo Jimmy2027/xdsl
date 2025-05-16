@@ -10,12 +10,11 @@ See external [documentation](https://mlir.llvm.org/docs/Dialects/EmitC/).
 from collections.abc import Iterable
 from typing import cast
 
-from xdsl.dialects import arith  # For arith.ConstantOp
+from xdsl.dialects import affine, arith
 from xdsl.dialects.builtin import (
     ArrayAttr,
     BFloat16Type,
     ContainerType,
-    DenseArrayBase,
     Float16Type,
     Float32Type,
     Float64Type,
@@ -26,9 +25,19 @@ from xdsl.dialects.builtin import (
     ShapedType,
     TensorType,
     TupleType,
-    UnrealizedConversionCastOp,
 )
-from xdsl.dialects.memref import SubviewOp
+from xdsl.dialects.memref import (
+    AllocOp as MemrefAllocOp,
+)
+from xdsl.dialects.memref import (
+    LoadOp as MemrefLoadOp,
+)
+from xdsl.dialects.memref import (
+    StoreOp as MemrefStoreOp,
+)
+from xdsl.dialects.memref import (
+    SubviewOp,
+)
 from xdsl.ir import (
     Attribute,
     AttributeCovT,
@@ -38,10 +47,8 @@ from xdsl.ir import (
     ParametrizedAttribute,
     Region,
     SSAValue,
-    TypeAttribute,  # Keep original name for class definitions
+    TypeAttribute,
 )
-
-# Use this alias for xdsl.ir.TypeAttribute in type hints within functions
 from xdsl.ir import TypeAttribute as IRTypeAttribute
 from xdsl.irdl import (
     AnyAttr,
@@ -638,169 +645,163 @@ class EmitC_YieldOp(IRDLOperation):
     name = "emitc.yield"
 
 
-def _generate_emitc_nested_loops_for_copy(
-    source_base: SSAValue,
-    dest_base: SSAValue,
+def _generate_affine_loops_for_subview_copy(
+    source_memref_ssa: SSAValue,
+    dest_memref_ssa: SSAValue,
     element_type: IRTypeAttribute,
-    offsets: list[SSAValue],
-    sizes: list[SSAValue],
-    strides: list[SSAValue],
+    subview_offsets_ssas: list[SSAValue],
+    subview_sizes_ssas: list[SSAValue],
+    subview_strides_ssas: list[SSAValue],
     iv_type: IRTypeAttribute,
     const_zero_ssa: SSAValue,
     const_one_ssa: SSAValue,
 ) -> list[IRDLOperation]:
     """
-    Generates a list of emitc operations to perform a copy equivalent to a
-    memref.subview's data movement.
-
-    Args:
-        source_base: SSAValue for the source memref (expected to be an emitc type).
-        dest_base: SSAValue for the destination memref (expected to be an emitc type).
-        element_type: The scalar element TypeAttribute of the memref.
-        offsets: List of SSAValues for the subview offsets.
-        sizes: List of SSAValues for the subview sizes (loop bounds).
-        strides: List of SSAValues for the subview strides.
-        iv_type: The TypeAttribute for loop induction variables.
-        const_zero_ssa: SSAValue for the constant 0 of iv_type.
-        const_one_ssa: SSAValue for the constant 1 of iv_type.
+    Generates a list of affine.for, arith, memref.load, memref.store operations
+    to perform a copy from a source memref (based on subview parameters) to a destination memref.
     """
-    rank = len(sizes)
+    rank = len(subview_sizes_ssas)
     if rank == 0:
         return []
 
-    iv_ssas: list[SSAValue | OpResult] = [source_base] * rank
+    loop_iv_ssas: list[SSAValue | OpResult] = [const_zero_ssa] * rank
 
     def build_loops_recursive(current_dim: int) -> list[IRDLOperation]:
         if current_dim == rank:
-            ops_for_assignment_body: list[IRDLOperation] = []
-            source_indices_ssas_local: list[SSAValue | OpResult] = [source_base] * rank
+            ops_for_body: list[IRDLOperation] = []
+
+            source_indices_ssas: list[SSAValue | OpResult] = [const_zero_ssa] * rank
             for k_idx in range(rank):
                 ivk_mul_stridek_op = arith.MuliOp(
-                    iv_ssas[k_idx],
-                    strides[k_idx],
+                    loop_iv_ssas[k_idx],
+                    subview_strides_ssas[k_idx],
                     result_type=iv_type,
                 )
-                ops_for_assignment_body.append(ivk_mul_stridek_op)
+                ops_for_body.append(ivk_mul_stridek_op)
                 src_idx_k_op = arith.AddiOp(
-                    offsets[k_idx],
+                    subview_offsets_ssas[k_idx],
                     ivk_mul_stridek_op.results[0],
                     result_type=iv_type,
                 )
-                ops_for_assignment_body.append(src_idx_k_op)
-                source_indices_ssas_local[k_idx] = src_idx_k_op.results[0]
-            current_rhs_val_ssa: SSAValue | OpResult = source_base
-            for k_idx in range(rank):
-                res_type_rhs: IRTypeAttribute
-                if k_idx == rank - 1:
-                    res_type_rhs = element_type
-                else:
-                    res_type_rhs = EmitC_PointerType(element_type)
-                subscript_op = EmitC_SubscriptOp.build(
-                    operands=[current_rhs_val_ssa, source_indices_ssas_local[k_idx]],
-                    result_types=[[res_type_rhs]],
-                )
-                ops_for_assignment_body.append(subscript_op)
-                current_rhs_val_ssa = subscript_op.results[0]
-            current_lhs_lvalue_ssa: SSAValue | OpResult = dest_base
-            lvalue_of_element_type = EmitC_LValueType(element_type)
-            for k_idx in range(rank):
-                res_type_lhs: IRTypeAttribute
-                if k_idx == rank - 1:
-                    res_type_lhs = lvalue_of_element_type
-                else:
-                    res_type_lhs = EmitC_PointerType(element_type)
-                subscript_op = EmitC_SubscriptOp.build(
-                    operands=[current_lhs_lvalue_ssa, iv_ssas[k_idx]],
-                    result_types=[[res_type_lhs]],
-                )
-                ops_for_assignment_body.append(subscript_op)
-                current_lhs_lvalue_ssa = subscript_op.results[0]
-            assign_op = EmitC_AssignOp.build(
-                operands=[current_rhs_val_ssa],
-                properties={"var": current_lhs_lvalue_ssa.type},
-                result_types=[],
-            )
-            ops_for_assignment_body.append(assign_op)
-            return ops_for_assignment_body
+                ops_for_body.append(src_idx_k_op)
+                source_indices_ssas[k_idx] = src_idx_k_op.results[0]
 
-        for_op = EmitC_ForOp.build(
-            operands=[const_zero_ssa, sizes[current_dim], const_one_ssa],
-            regions=[Region([Block(arg_types=[iv_type])])],  # type: ignore
+            load_op = MemrefLoadOp.build(
+                operands=[source_memref_ssa, source_indices_ssas]
+            )
+            ops_for_body.append(load_op)
+            loaded_value_ssa = load_op.results[0]
+
+            store_op = MemrefStoreOp.build(
+                operands=[loaded_value_ssa, dest_memref_ssa, loop_iv_ssas]
+            )
+            ops_for_body.append(store_op)
+
+            return ops_for_body
+
+        for_op = affine.ForOp.build(
+            operands=[const_zero_ssa, subview_sizes_ssas[current_dim], const_one_ssa],
+            regions=[Region(Block(arg_types=[iv_type]))],
         )
-        iv_ssas[current_dim] = for_op.regions[0].blocks[0].args[0]
+        loop_iv_ssas[current_dim] = for_op.regions[0].blocks[0].args[0]
+
         inner_ops = build_loops_recursive(current_dim + 1)
         for_op.regions[0].blocks[0].add_ops(inner_ops)
         return [for_op]
 
-    final_ops = build_loops_recursive(0)
-    return final_ops
+    final_loop_ops = build_loops_recursive(0)
+    return final_loop_ops
 
 
-def generate_emitc_subview_copy_ops(
+def lower_subview_to_affine_loops(
     subview_op: SubviewOp,
-    dest_emitc_array_ssa: SSAValue,  # SSAValue of EmitC_ArrayType for the destination
     insertion_block: Block,
-) -> list[IRDLOperation]:
+) -> SSAValue:
     """
-    Generates emitc operations to perform a copy equivalent to a memref.subview.
-    Prerequisite ops (casts, constants) are inserted into insertion_block.
-    Returns the list of loop ops, which should also be added to insertion_block by the caller.
+    Lowers a memref.subview to an explicit copy loop nest using affine.for,
+    arith operations, and memref.alloc/load/store.
+    Inserts all generated operations into the insertion_block.
+    Returns the SSAValue of the newly allocated destination memref.
     """
     source_memref_val = subview_op.source
-    if not isinstance(source_memref_val.type, MemRefType):
+    source_memref_type = source_memref_val.type
+    if not isinstance(source_memref_type, MemRefType):
         raise TypeError("Subview source is not a MemRefType")
-    source_memref_type: MemRefType = source_memref_val.type
-
-    # 1. Cast source memref to EmitC_ArrayType
-    emitc_source_type = EmitC_ArrayType(
-        source_memref_type.get_shape(), source_memref_type.element_type
-    )
-    cast_source_op = UnrealizedConversionCastOp.build(
-        operands=[source_memref_val], result_types=[[emitc_source_type]]
-    )
-    insertion_block.add_op(cast_source_op)
-    emitc_source_ssa = SSAValue.get(cast_source_op.results[0])
 
     element_type = source_memref_type.element_type
     iv_type = IndexType()
 
-    # 2. Create constants for 0 and 1
+    dest_memref_type = subview_op.result.type
+    if not isinstance(dest_memref_type, MemRefType):
+        raise TypeError(
+            "Subview result is not a MemRefType, cannot determine alloc type."
+        )
+
+    alloc_op = MemrefAllocOp.get(
+        return_type=dest_memref_type, dynamic_sizes=[], alignment=None
+    )
+    insertion_block.add_op(alloc_op)
+    dest_memref_ssa = alloc_op.results[0]
+
     const_zero_op = arith.ConstantOp.from_int_and_width(0, iv_type)
     const_one_op = arith.ConstantOp.from_int_and_width(1, iv_type)
     insertion_block.add_ops([const_zero_op, const_one_op])
     const_zero_ssa = SSAValue.get(const_zero_op.results[0])
     const_one_ssa = SSAValue.get(const_one_op.results[0])
 
-    # 3. Extract offsets, sizes, strides from SubviewOp and create constants
-    def attr_to_ssas(attr: Attribute, op_name: str) -> list[SSAValue]:
-        if not isinstance(attr, DenseArrayBase):
-            raise TypeError(
-                f"Subview {op_name} is not a DenseIntElementsAttr for static extraction. Dynamic not supported here."
+    def attr_to_ssas(attr: Attribute | None, attr_name: str) -> list[SSAValue]:
+        if attr is None:
+            raise NotImplementedError(
+                f"Dynamic {attr_name} not supported by this lowering yet."
             )
-        ssas: list[SSAValue] = []
 
+        ssas: list[SSAValue] = []
         for val in attr.iter_values():
             const_op = arith.ConstantOp.from_int_and_width(val, iv_type)
             insertion_block.add_op(const_op)
             ssas.append(SSAValue.get(const_op.results[0]))
         return ssas
 
-    offsets_ssas = attr_to_ssas(subview_op.static_offsets, "static_offsets")
-    sizes_ssas = attr_to_ssas(subview_op.static_sizes, "static_sizes")
-    strides_ssas = attr_to_ssas(subview_op.static_strides, "static_strides")
+    subview_offsets_ssas = attr_to_ssas(subview_op.static_offsets, "static_offsets")
+    subview_sizes_ssas = attr_to_ssas(subview_op.static_sizes, "static_sizes")
+    subview_strides_ssas = attr_to_ssas(subview_op.static_strides, "static_strides")
 
-    # 4. Call the loop generation logic
-    return _generate_emitc_nested_loops_for_copy(
-        source_base=emitc_source_ssa,
-        dest_base=dest_emitc_array_ssa,
-        element_type=element_type,
-        offsets=offsets_ssas,
-        sizes=sizes_ssas,
-        strides=strides_ssas,
-        iv_type=iv_type,
-        const_zero_ssa=const_zero_ssa,
-        const_one_ssa=const_one_ssa,
-    )
+    if not subview_sizes_ssas:
+        if rank := len(subview_offsets_ssas):
+            source_indices_ssas: list[SSAValue | OpResult] = []
+            for k_idx in range(rank):
+                source_indices_ssas.append(subview_offsets_ssas[k_idx])
+
+            load_op = MemrefLoadOp.build(
+                operands=[source_memref_val, source_indices_ssas]
+            )
+            insertion_block.add_op(load_op)
+            store_op = MemrefStoreOp.build(
+                operands=[load_op.results[0], dest_memref_ssa, []]
+            )
+            insertion_block.add_op(store_op)
+        else:
+            load_op = MemrefLoadOp.build(operands=[source_memref_val, []])
+            insertion_block.add_op(load_op)
+            store_op = MemrefStoreOp.build(
+                operands=[load_op.results[0], dest_memref_ssa, []]
+            )
+            insertion_block.add_op(store_op)
+    else:
+        loop_ops = _generate_affine_loops_for_subview_copy(
+            source_memref_ssa=source_memref_val,
+            dest_memref_ssa=dest_memref_ssa,
+            element_type=element_type,
+            subview_offsets_ssas=subview_offsets_ssas,
+            subview_sizes_ssas=subview_sizes_ssas,
+            subview_strides_ssas=subview_strides_ssas,
+            iv_type=iv_type,
+            const_zero_ssa=const_zero_ssa,
+            const_one_ssa=const_one_ssa,
+        )
+        insertion_block.add_ops(loop_ops)
+
+    return dest_memref_ssa
 
 
 EmitC = Dialect(

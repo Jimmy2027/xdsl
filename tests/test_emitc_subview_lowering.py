@@ -19,7 +19,7 @@ from xdsl.dialects.emitc import (
     EmitC_ArrayType,
     EmitC_AssignOp,
     EmitC_ForOp,
-    generate_emitc_subview_copy_ops,
+    lower_subview_to_affine_loops,
 )
 from xdsl.ir import Attribute, Block  # Added Attribute for type checking
 from xdsl.printer import Printer
@@ -62,9 +62,8 @@ def test_convert_memref_subview_to_emitc():
     )
     temp_block.add_op(subview_op)
 
-    copy_ops = generate_emitc_subview_copy_ops(
+    copy_ops = lower_subview_to_affine_loops(
         subview_op=subview_op,
-        dest_emitc_array_ssa=dest_emitc_array_ssa,
         insertion_block=insertion_block,
     )
     insertion_block.add_ops(copy_ops)
