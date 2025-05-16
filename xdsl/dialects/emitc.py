@@ -10,7 +10,6 @@ See external [documentation](https://mlir.llvm.org/docs/Dialects/EmitC/).
 from collections.abc import Iterable
 from typing import cast
 
-from xdsl.dialects import arith, scf
 from xdsl.dialects.builtin import (
     ArrayAttr,
     BFloat16Type,
@@ -21,35 +20,18 @@ from xdsl.dialects.builtin import (
     IndexType,
     IntAttr,
     IntegerType,
-    MemRefType,
     ShapedType,
     TensorType,
     TupleType,
 )
-from xdsl.dialects.memref import (
-    AllocOp as MemrefAllocOp,
-)
-from xdsl.dialects.memref import (
-    LoadOp as MemrefLoadOp,
-)
-from xdsl.dialects.memref import (
-    StoreOp as MemrefStoreOp,
-)
-from xdsl.dialects.memref import (
-    SubviewOp,
-)
 from xdsl.ir import (
     Attribute,
     AttributeCovT,
-    Block,
     Dialect,
-    OpResult,
     ParametrizedAttribute,
     Region,
-    SSAValue,
     TypeAttribute,
 )
-from xdsl.ir import TypeAttribute as IRTypeAttribute
 from xdsl.irdl import (
     AnyAttr,
     AnyOf,
@@ -643,182 +625,6 @@ class EmitC_VerbatimOp(IRDLOperation):
 @irdl_op_definition
 class EmitC_YieldOp(IRDLOperation):
     name = "emitc.yield"
-
-
-def _generate_affine_loops_for_subview_copy(
-    source_memref_ssa: SSAValue,
-    dest_memref_ssa: SSAValue,
-    element_type: IRTypeAttribute,
-    subview_offsets_ssas: list[SSAValue],
-    subview_sizes_ssas: list[SSAValue],
-    subview_strides_ssas: list[SSAValue],
-    iv_type: IRTypeAttribute,
-    const_zero_ssa: SSAValue,
-    const_one_ssa: SSAValue,
-) -> list[IRDLOperation]:
-    """
-    Generates a list of scf.for, arith, memref.load, memref.store operations
-    to perform a copy from a source memref (based on subview parameters) to a destination memref.
-    """
-    rank = len(subview_sizes_ssas)
-    if rank == 0:
-        return []
-
-    # Only allow SSAValue in loop_iv_ssas
-    loop_iv_ssas: list[SSAValue] = [const_zero_ssa] * rank
-
-    def build_loops_recursive(current_dim: int) -> list[IRDLOperation]:
-        if current_dim == rank:
-            ops_for_body: list[IRDLOperation] = []
-
-            source_indices_ssas: list[SSAValue] = [const_zero_ssa] * rank
-            for k_idx in range(rank):
-                ivk_mul_stridek_op = arith.MuliOp(
-                    loop_iv_ssas[k_idx],
-                    subview_strides_ssas[k_idx],
-                    result_type=iv_type,
-                )
-                ops_for_body.append(ivk_mul_stridek_op)
-                src_idx_k_op = arith.AddiOp(
-                    subview_offsets_ssas[k_idx],
-                    ivk_mul_stridek_op.results[0],
-                    result_type=iv_type,
-                )
-                ops_for_body.append(src_idx_k_op)
-                source_indices_ssas[k_idx] = SSAValue.get(src_idx_k_op.results[0])
-
-            load_op = MemrefLoadOp.get(
-                ref=source_memref_ssa, indices=source_indices_ssas
-            )
-            ops_for_body.append(load_op)
-            loaded_value_ssa = load_op.results[0]
-
-            # Ensure all loop_iv_ssas are SSAValue, not OpResult
-            store_indices = [SSAValue.get(iv) for iv in loop_iv_ssas]
-            store_op = MemrefStoreOp.build(
-                operands=[loaded_value_ssa, dest_memref_ssa, store_indices]
-            )
-            ops_for_body.append(store_op)
-
-            return ops_for_body
-
-        # Create the body for scf.ForOp
-        # The block takes the induction variable.
-        body_block = Block(arg_types=[iv_type])
-        body_region = Region(body_block)
-
-        for_op = scf.ForOp(
-            lb=const_zero_ssa,
-            ub=subview_sizes_ssas[current_dim],
-            step=const_one_ssa,
-            iter_args=[],
-            body=body_region,
-        )
-        # The new loop's induction variable is the first (and only) argument of the body block
-        current_loop_iv = body_block.args[0]
-        loop_iv_ssas[current_dim] = SSAValue.get(current_loop_iv)
-
-        inner_ops = build_loops_recursive(current_dim + 1)
-        body_block.add_ops(inner_ops)
-        # Add scf.YieldOp at the end of the body block
-        body_block.add_op(scf.YieldOp())
-        return [for_op]
-
-    final_loop_ops = build_loops_recursive(0)
-    return final_loop_ops
-
-
-def lower_subview_to_affine_loops(
-    subview_op: SubviewOp,
-    insertion_block: Block,
-) -> SSAValue:
-    """
-    Lowers a memref.subview to an explicit copy loop nest using affine.for,
-    arith operations, and memref.alloc/load/store.
-    Inserts all generated operations into the insertion_block.
-    Returns the SSAValue of the newly allocated destination memref.
-    """
-    source_memref_val = subview_op.source
-    source_memref_type = source_memref_val.type
-    if not isinstance(source_memref_type, MemRefType):
-        raise TypeError("Subview source is not a MemRefType")
-
-    element_type = source_memref_type.element_type
-    iv_type = IndexType()
-
-    dest_memref_type = subview_op.result.type
-    if not isinstance(dest_memref_type, MemRefType):
-        raise TypeError(
-            "Subview result is not a MemRefType, cannot determine alloc type."
-        )
-
-    alloc_op = MemrefAllocOp.get(
-        return_type=dest_memref_type.element_type,
-        dynamic_sizes=[],
-        alignment=None,
-        shape=dest_memref_type.shape,
-    )
-    insertion_block.add_op(alloc_op)
-    dest_memref_ssa = alloc_op.results[0]
-
-    const_zero_op = arith.ConstantOp.from_int_and_width(0, iv_type)
-    const_one_op = arith.ConstantOp.from_int_and_width(1, iv_type)
-    insertion_block.add_ops([const_zero_op, const_one_op])
-    const_zero_ssa = SSAValue.get(const_zero_op.results[0])
-    const_one_ssa = SSAValue.get(const_one_op.results[0])
-
-    def attr_to_ssas(attr: Attribute | None, attr_name: str) -> list[SSAValue]:
-        if attr is None:
-            raise NotImplementedError(
-                f"Dynamic {attr_name} not supported by this lowering yet."
-            )
-        ssas: list[SSAValue] = []
-        for val in attr.iter_values():
-            const_op = arith.ConstantOp.from_int_and_width(val, iv_type)
-            insertion_block.add_op(const_op)
-            ssas.append(SSAValue.get(const_op.results[0]))
-        return ssas
-
-    subview_offsets_ssas = attr_to_ssas(subview_op.static_offsets, "static_offsets")
-    subview_sizes_ssas = attr_to_ssas(subview_op.static_sizes, "static_sizes")
-    subview_strides_ssas = attr_to_ssas(subview_op.static_strides, "static_strides")
-
-    if not subview_sizes_ssas:
-        if rank := len(subview_offsets_ssas):
-            source_indices_ssas: list[SSAValue | OpResult] = []
-            for k_idx in range(rank):
-                source_indices_ssas.append(subview_offsets_ssas[k_idx])
-
-            load_op = MemrefLoadOp.build(
-                operands=[source_memref_val, source_indices_ssas]
-            )
-            insertion_block.add_op(load_op)
-            store_op = MemrefStoreOp.build(
-                operands=[load_op.results[0], dest_memref_ssa, []]
-            )
-            insertion_block.add_op(store_op)
-        else:
-            load_op = MemrefLoadOp.build(operands=[source_memref_val, []])
-            insertion_block.add_op(load_op)
-            store_op = MemrefStoreOp.build(
-                operands=[load_op.results[0], dest_memref_ssa, []]
-            )
-            insertion_block.add_op(store_op)
-    else:
-        loop_ops = _generate_affine_loops_for_subview_copy(
-            source_memref_ssa=source_memref_val,
-            dest_memref_ssa=dest_memref_ssa,
-            element_type=element_type,
-            subview_offsets_ssas=subview_offsets_ssas,
-            subview_sizes_ssas=subview_sizes_ssas,
-            subview_strides_ssas=subview_strides_ssas,
-            iv_type=iv_type,
-            const_zero_ssa=const_zero_ssa,
-            const_one_ssa=const_one_ssa,
-        )
-        insertion_block.add_ops(loop_ops)
-
-    return dest_memref_ssa
 
 
 EmitC = Dialect(

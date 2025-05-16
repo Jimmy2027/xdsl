@@ -7,7 +7,6 @@ from xdsl.dialects.builtin import (
     i8 as i8_type,
 )
 from xdsl.dialects.emitc import (
-    lower_subview_to_affine_loops,
 )
 from xdsl.ir import (
     Block,
