@@ -1,8 +1,8 @@
 from math import copysign, isnan
 from typing import Any, cast
 
-from xdsl.dialects import arith
-from xdsl.dialects.builtin import DenseIntOrFPElementsAttr, IntegerAttr
+from xdsl.dialects import arith, builtin
+from xdsl.dialects.builtin import FloatAttr, IntegerAttr
 from xdsl.interpreter import (
     Interpreter,
     InterpreterFunctions,
@@ -10,8 +10,9 @@ from xdsl.interpreter import (
     impl,
     register_impls,
 )
+from xdsl.interpreters.builtin import xtype_for_el_type
 from xdsl.interpreters.shaped_array import ShapedArray
-from xdsl.interpreters.utils.ptr import RawPtr, TypedPtr
+from xdsl.interpreters.utils.ptr import TypedPtr
 from xdsl.utils.exceptions import InterpretationError
 
 
@@ -22,26 +23,23 @@ class ArithFunctions(InterpreterFunctions):
     def run_constant(
         self, interpreter: Interpreter, op: arith.ConstantOp, args: PythonValues
     ) -> PythonValues:
-        # interpreter.interpreter_assert(
-        #     isattr(
-        #         op.value,
-        #         IntegerAttr | FloatAttr | DenseIntOrFPElementsAttr,
-        #     ),
-        #     f"arith.constant not implemented for {type(op.value)}",
-        # )
-        value = op.value
-        if isinstance(value, DenseIntOrFPElementsAttr):
-            shape = list(value.get_shape())
-            return (
-                ShapedArray(
-                    TypedPtr[Any](
-                        raw=RawPtr(bytearray(value.data.data)),
-                        xtype=value.get_element_type(),
-                    ),
-                    shape,
-                ),
+        if isinstance(op.value, builtin.DenseIntOrFPElementsAttr):
+            initial_value = op.value
+            data = initial_value.get_values()
+            shape = initial_value.get_shape()
+            assert shape is not None
+            xtype = xtype_for_el_type(
+                initial_value.get_element_type(), interpreter.index_bitwidth
             )
+            shaped_array = ShapedArray(
+                TypedPtr[Any].new(data, xtype=xtype), list(shape)
+            )
+            return (shaped_array,)
 
+        interpreter.interpreter_assert(
+            isinstance(op.value, IntegerAttr | FloatAttr),
+            f"arith.constant not implemented for {type(op.value)}",
+        )
         value = cast(IntegerAttr, op.value)
 
         return (value.value.data,)
