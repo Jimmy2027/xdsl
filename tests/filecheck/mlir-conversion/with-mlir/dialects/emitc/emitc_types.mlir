@@ -17,8 +17,13 @@
   f64_1D = !emitc.array<5xf64>,
   i1_0D = !emitc.array<0xi1>,
   i1_3D = !emitc.array<3x4x5xi1>,
-  i32_1D = !emitc.array<10xi32>,
-  index_1D = !emitc.array<1xindex>
+  i1_0D = !emitc.array<0xi1>,
+  lvalue_i32 = !emitc.lvalue<i32>,
+  opaque_type = !emitc.opaque<"my_custom_type">,
+  ptr_f32 = !emitc.ptr<f32>,
+  ptrdiff_t_type = !emitc.ptrdiff_t,
+  size_t_type = !emitc.size_t,
+  ssize_t_type = !emitc.ssize_t
 }: ()->()
 
 //===----------------------------------------------------------------------===//

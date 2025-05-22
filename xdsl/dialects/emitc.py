@@ -139,6 +139,98 @@ class EmitC_LValueType(ParametrizedAttribute, TypeAttribute):
             raise VerifyException("!emitc.lvalue cannot wrap !emitc.array type")
 
 
+
+
+@irdl_attr_definition
+class EmitC_OpaqueType(ParametrizedAttribute, TypeAttribute):
+    """EmitC opaque type"""
+
+    name = "emitc.opaque"
+    value: ParameterDef[StringAttr]
+
+    def __init__(self, value: StringAttr):
+        super().__init__([value])
+
+    def verify(self) -> None:
+        if not self.value.data:
+            raise VerifyException("expected non empty string in !emitc.opaque type")
+        if self.value.data[-1] == "*":
+            raise VerifyException(
+                "pointer not allowed as outer type with !emitc.opaque, use !emitc.ptr instead"
+            )
+
+    @classmethod
+    def parse_parameter(cls, parser: AttrParser):
+        with parser.in_angle_brackets():
+            value = parser.parse_str_literal()
+            if not value:
+                raise parser.raise_error(
+                    "expected non empty string in !emitc.opaque type"
+                )
+            if value[-1] == "*":
+                raise parser.raise_error(
+                    "pointer not allowed as outer type with !emitc.opaque, use !emitc.ptr instead"
+                )
+            return StringAttr(value)
+
+
+@irdl_attr_definition
+class EmitC_PointerType(ParametrizedAttribute, TypeAttribute):
+    """EmitC pointer type"""
+
+    name = "emitc.ptr"
+    pointee_type: ParameterDef[TypeAttribute]
+
+    def __init__(self, pointee_type: TypeAttribute):
+        super().__init__([pointee_type])
+
+    def verify(self) -> None:
+        if isinstance(self.pointee_type, EmitC_LValueType):
+            raise VerifyException("pointers to lvalues are not allowed")
+
+    @classmethod
+    def parse_parameter(cls, parser: AttrParser):
+        with parser.in_angle_brackets():
+            type = parser.parse_type()
+            if isinstance(type, EmitC_LValueType):
+                raise parser.raise_error("pointers to lvalues are not allowed")
+            return type
+
+
+@irdl_attr_definition
+class EmitC_PtrDiffT(ParametrizedAttribute, TypeAttribute):
+    """EmitC signed pointer diff type"""
+
+    name = "emitc.ptrdiff_t"
+
+
+@irdl_attr_definition
+class EmitC_SignedSizeT(ParametrizedAttribute, TypeAttribute):
+    """EmitC signed size type"""
+
+    name = "emitc.ssize_t"
+
+
+@irdl_attr_definition
+class EmitC_SizeT(ParametrizedAttribute, TypeAttribute):
+    """EmitC unsigned size type"""
+
+    name = "emitc.size_t"
+
+
+@irdl_attr_definition
+class EmitC_OpaqueAttr(ParametrizedAttribute):
+    """An opaque attribute"""
+
+    name = "emitc.opaque"
+    value: ParameterDef[StringAttr]
+
+
+def is_pointer_wide_type(type_attr: Attribute) -> bool:
+    """Check if a type is a pointer-wide type."""
+    return isinstance(type_attr, EmitC_SignedSizeT | EmitC_SizeT | EmitC_PtrDiffT)
+
+
 _SUPPORTED_BITWIDTHS = (1, 8, 16, 32, 64)
 
 
@@ -162,6 +254,46 @@ def is_supported_float_type(type_attr: Attribute) -> bool:
         case Float16Type() | BFloat16Type() | Float32Type() | Float64Type():
             return True
         case _:
+            return True
+
+    if is_supported_float_type(type_attr):
+        return True
+
+    if isinstance(type_attr, IntegerType):
+        # is_supported_integer_type handles the width check
+        if _is_supported_integer_type(type_attr):
+            return True
+
+    if isinstance(type_attr, IndexType):
+        return True
+
+    if isinstance(type_attr, EmitC_OpaqueType):
+        return True
+
+    if is_pointer_wide_type(type_attr):
+        return True
+
+    if isinstance(type_attr, EmitC_PointerType):
+        return is_supported_emitc_type(type_attr.pointee_type)
+
+    if isinstance(type_attr, EmitC_ArrayType):
+        elem_type: Attribute = type_attr.get_element_type()
+        return not isinstance(elem_type, EmitC_ArrayType) and is_supported_emitc_type(
+            elem_type
+        )
+
+    if isinstance(type_attr, IndexType) or is_pointer_wide_type(type_attr):
+        return True
+
+    if isinstance(type_attr, IntegerType):
+        return is_supported_integer_type(type_attr)
+
+    if isinstance(type_attr, AnyFloat):
+        return is_supported_float_type(type_attr)
+
+    if isinstance(type_attr, TensorType):
+        elem_type = type_attr.get_element_type()
+        if isinstance(elem_type, EmitC_ArrayType):
             return False
 
 
@@ -247,5 +379,12 @@ EmitC = Dialect(
     [
         EmitC_ArrayType,
         EmitC_LValueType,
+        EmitC_LValueType,
+        EmitC_OpaqueType,
+        EmitC_PointerType,
+        EmitC_PtrDiffT,
+        EmitC_SignedSizeT,
+        EmitC_SizeT,
+        EmitC_OpaqueAttr,
     ],
 )
