@@ -8,6 +8,7 @@ See external [documentation](https://mlir.llvm.org/docs/Dialects/EmitC/).
 """
 
 from collections.abc import Iterable
+from typing import Annotated
 
 from xdsl.dialects.builtin import (
     AnyFloat,
@@ -30,12 +31,31 @@ from xdsl.ir import (
     TypeAttribute,
 )
 from xdsl.irdl import (
+    AnyOf,
+    EqAttrConstraint,
+    ParamAttrConstraint,
     ParameterDef,
     irdl_attr_definition,
 )
 from xdsl.parser import AttrParser
 from xdsl.printer import Printer
 from xdsl.utils.exceptions import VerifyException
+
+_supported_emitc_int_widths = [1, 8, 16, 32, 64]
+_supported_int_width_attr_constraint = AnyOf(
+    [EqAttrConstraint(IntAttr(w)) for w in _supported_emitc_int_widths]
+)
+
+
+_emitc_integer_type_constr = ParamAttrConstraint(
+    IntegerType, [_supported_int_width_attr_constraint]
+)
+
+_EMITC_SUPPORTED_ELEMENT_TYPE_CONSTRAINT = AnyOf(
+    [
+        _emitc_integer_type_constr,
+    ]
+)
 
 
 @irdl_attr_definition
@@ -47,7 +67,9 @@ class EmitC_ArrayType(
     name = "emitc.array"
 
     shape: ParameterDef[ArrayAttr[IntAttr]]
-    element_type: ParameterDef[AttributeCovT]
+    element_type: ParameterDef[
+        Annotated[AttributeCovT, _EMITC_SUPPORTED_ELEMENT_TYPE_CONSTRAINT]
+    ]
 
     def __init__(
         self,
