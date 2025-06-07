@@ -209,6 +209,38 @@ def is_supported_emitc_type(type_attr: Attribute) -> bool:
             return False
 
 
+def is_supported_emitc_type(type_attr: Attribute) -> bool:
+    """
+    Check if a type is supported by EmitC.
+    See [MLIR implementation](https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/EmitC/IR/EmitC.cpp#L62).
+    """
+    match type_attr:
+        case IntegerType():
+            return _is_supported_integer_type(type_attr)
+        case IndexType():
+            return True
+        case EmitC_ArrayType():
+            elem_type = cast(Attribute, type_attr.get_element_type())
+            return not isa(elem_type, EmitC_ArrayType) and is_supported_emitc_type(
+                elem_type
+            )
+        case Float16Type() | BFloat16Type() | Float32Type() | Float64Type():
+            return True
+        case TensorType():
+            elem_type = cast(Attribute, type_attr.get_element_type())
+            if isinstance(elem_type, EmitC_ArrayType):
+                return False
+            return is_supported_emitc_type(elem_type)
+        # TODO: Tuple type is not implemented yet, but it should be a valid emitc type.
+        # case TupleType():
+        #     return all(
+        #         not isinstance(t, EmitC_ArrayType) and is_supported_emitc_type(t)
+        #         for t in type_attr.types
+        #     )
+        case _:
+            return False
+
+
 EmitC = Dialect(
     "emitc",
     [],
