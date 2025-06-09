@@ -42,6 +42,7 @@ def print_for_op_like(
     step: SSAValue,
     iter_args: Sequence[SSAValue],
     body: Region,
+    attributes: dict[str, Attribute],
     default_indvar_type: type[TypeAttribute] | None = None,
     bound_words: Sequence[str] = ["to"],
 ):
@@ -105,12 +106,16 @@ def print_for_op_like(
         print_block_terminators=bool(iter_args),
     )
 
+    printer.print_op_attributes(attributes=attributes)
+
 
 def parse_for_op_like(
     parser: Parser,
     default_indvar_type: TypeAttribute | None = None,
     bound_words: Sequence[str] = ["to"],
-) -> tuple[SSAValue, SSAValue, SSAValue, Sequence[SSAValue], Region]:
+) -> tuple[
+    SSAValue, SSAValue, SSAValue, Sequence[SSAValue], Region, dict[str, Attribute]
+]:
     """
     Returns the loop bounds, step, iteration arguments, and body.
 
@@ -178,7 +183,9 @@ def parse_for_op_like(
 
     body = parser.parse_region((indvar, *iter_args))
 
-    return lower_bound, upper_bound, step, iter_arg_operands, body
+    attributes = parser.parse_optional_attr_dict()
+
+    return lower_bound, upper_bound, step, iter_arg_operands, body, attributes
 
 
 def print_func_op_like(

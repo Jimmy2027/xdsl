@@ -324,6 +324,7 @@ class ForOp(IRDLOperation):
         step: SSAValue | Operation,
         iter_args: Sequence[SSAValue | Operation],
         body: Region | Sequence[Operation] | Sequence[Block] | Block,
+        attribrutes: dict[str, Attribute] | None = None,
     ):
         if isinstance(body, Block):
             body = [body]
@@ -332,6 +333,7 @@ class ForOp(IRDLOperation):
             operands=[lb, ub, step, iter_args],
             result_types=[[SSAValue.get(a).type for a in iter_args]],
             regions=[body],
+            attributes=attribrutes,
         )
 
     def verify_(self):
@@ -386,15 +388,18 @@ class ForOp(IRDLOperation):
             self.step,
             self.iter_args,
             self.body,
+            self.attributes,
             IndexType,
         )
 
     @classmethod
     def parse(cls, parser: Parser) -> Self:
-        lb, ub, step, iter_arg_operands, body = parse_for_op_like(parser, IndexType())
+        lb, ub, step, iter_arg_operands, body, attributes = parse_for_op_like(
+            parser, IndexType()
+        )
         _, *iter_args = body.block.args
 
-        for_op = cls(lb, ub, step, iter_arg_operands, body)
+        for_op = cls(lb, ub, step, iter_arg_operands, body, attributes)
 
         if not iter_args:
             for trait in for_op.get_traits_of_type(SingleBlockImplicitTerminator):
