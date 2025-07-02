@@ -93,7 +93,7 @@ builtin.module {
 // -----
 
 %0 = "test.op"() : () -> (tensor<2x3x20xf32>)
-//CHECK: expected dimension 2 of collapsed type to be static value of 40
+// CHECK: expected dimension 2 of collapsed type to be static value of 40
 %illegal_expanding_reshape_static_tensor = tensor.expand_shape %0 [[0], [1], [2, 3, 4]] output_shape [2, 3, 2, 4, 5]
       : tensor<2x3x20xf32> into tensor<2x3x2x4x5xf32>
 

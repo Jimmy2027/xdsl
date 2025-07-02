@@ -65,10 +65,6 @@ def verify_reshape_like_types(
 ):
     """
     Verify that collapsed and expanded types conform to reassociation mapping.
-
-    Example:
-    >>> collapsed_type = ShapedType.from_shape((2, 3))
-    >>> expanded_type = ShapedType.from_shape((6,))
     """
     expanded_rank = len(expanded_type.get_shape())
     collapsed_rank = len(collapsed_type.get_shape())
