@@ -27,7 +27,6 @@ from xdsl.dialects.utils.reshape_ops_utils import (
 )
 from xdsl.ir import Attribute, Dialect, Operation, SSAValue
 from xdsl.irdl import (
-    AnyAttr,
     AttrSizedOperandSegments,
     ConstraintVar,
     IRDLOperation,
@@ -315,7 +314,7 @@ class ExpandShapeOp(IRDLOperation):
 
     static_output_shape = prop_def(DenseArrayBase.constr(i64))
 
-    result = result_def(AnyAttr())
+    result = result_def(TensorType[Attribute])
 
     def __init__(
         self,
