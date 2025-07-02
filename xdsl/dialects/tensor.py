@@ -350,16 +350,6 @@ class ExpandShapeOp(IRDLOperation):
                 f"({len(self.result.type.get_shape())}) but found {len(self.static_output_shape)} inputs instead"
             )
 
-        # make sure the static output shape has as many dynamic dims as the result type
-        if len(self.static_output_shape) != len(
-            [dim for dim in self.result.type.get_shape() if dim == -1]
-        ):
-            raise VerifyException(
-                f"mismatch in dynamic dims in output_shape and static_output_shape: static_output_shape has "
-                f"{len([dim for dim in self.static_output_shape.get_values() if dim == -1])} dynamic dims while"
-                f" output_shape has {len(self.dynamic_output_shape)} values"
-            )
-
         verify_reshape_like_types(
             collapsed_type=self.src.type,
             expanded_type=self.result.type,
