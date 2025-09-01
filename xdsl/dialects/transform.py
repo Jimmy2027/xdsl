@@ -791,6 +791,40 @@ class PromoteOp(IRDLOperation):
 
 
 @irdl_op_definition
+class AnnotateOp(IRDLOperation):
+    """
+    See external documentation:
+    https://mlir.llvm.org/docs/Dialects/Transform/#transformannotate-transformannotateop
+
+    Annotates target ops with a named attribute. Optionally takes a parameter
+    handle providing the attribute value; otherwise, a UnitAttr is implied.
+    """
+
+    name = "transform.annotate"
+
+    target = operand_def(TransformHandleType)
+    attr_name = prop_def(StringAttr, prop_name="name")
+    param = opt_operand_def(TransformParamHandleType)
+
+    assembly_format = (
+        "$target $name (`,` $param^ `:` type($param))? attr-dict `:` type($target)"
+    )
+
+    def __init__(
+        self,
+        target: SSAValue,
+        name: str | StringAttr,
+        param: SSAValue | None = None,
+    ):
+        if isinstance(name, str):
+            name = StringAttr(name)
+        super().__init__(
+            operands=[target, param],
+            properties={"name": name},
+        )
+
+
+@irdl_op_definition
 class SelectOp(IRDLOperation):
     """
     See external [documentation](https://mlir.llvm.org/docs/Dialects/Transform/#transformselect-transformselectop).
@@ -1005,6 +1039,7 @@ Transform = Dialect(
         TileOp,
         TileToForallOp,
         PromoteOp,
+        AnnotateOp,
         SelectOp,
         NamedSequenceOp,
         CastOp,
