@@ -708,6 +708,89 @@ class TileToForallOp(IRDLOperation):
 
 
 @irdl_op_definition
+class PromoteOp(IRDLOperation):
+    """
+    Promote the specified operands of the target into a separate memory buffer.
+
+    See external documentation:
+    https://mlir.llvm.org/docs/Dialects/Transform/#transformstructuredpromote-transformpromoteop
+    """
+
+    name = "transform.structured.promote"
+
+    target = operand_def(TransformHandleType)
+
+    operands_to_promote = opt_prop_def(ArrayAttr[IntegerAttr])
+    use_full_tile_buffers = opt_prop_def(ArrayAttr[BoolAttr])
+    use_full_tiles_by_default = opt_prop_def(UnitAttr)
+    use_original_subview_size = opt_prop_def(UnitAttr)
+    use_alloca = opt_prop_def(UnitAttr)
+    memory_space = opt_attr_def(Attribute)
+    mapping = opt_attr_def(ArrayAttr)
+    alignment = opt_prop_def(IntegerAttr)
+
+    transformed = result_def(AnyOpType)
+
+    def __init__(
+        self,
+        target: SSAValue,
+        *,
+        operands_to_promote: ArrayAttr[IntegerAttr] | Sequence[int] | None = None,
+        use_full_tile_buffers: ArrayAttr[BoolAttr] | Sequence[bool] | None = None,
+        use_full_tiles_by_default: bool | UnitAttr | None = None,
+        use_original_subview_size: bool | UnitAttr | None = None,
+        use_alloca: bool | UnitAttr | None = None,
+        memory_space: Attribute | None = None,
+        mapping: ArrayAttr | Sequence[Attribute] | None = None,
+        alignment: int | IntegerAttr | None = None,
+    ):
+        # Normalize list-like inputs to ArrayAttr when needed.
+        if isinstance(operands_to_promote, Sequence) and not isinstance(
+            operands_to_promote, ArrayAttr
+        ):
+            operands_to_promote = ArrayAttr(
+                [IntegerAttr(v, i64) for v in operands_to_promote]
+            )
+
+        if isinstance(use_full_tile_buffers, Sequence) and not isinstance(
+            use_full_tile_buffers, ArrayAttr
+        ):
+            use_full_tile_buffers = ArrayAttr(
+                [BoolAttr.from_bool(bool(v)) for v in use_full_tile_buffers]
+            )
+
+        def to_unit(v: bool | UnitAttr | None) -> UnitAttr | None:
+            if isinstance(v, UnitAttr) or v is None:
+                return v
+            return UnitAttr() if v else None
+
+        use_full_tiles_by_default = to_unit(use_full_tiles_by_default)
+        use_original_subview_size = to_unit(use_original_subview_size)
+        use_alloca = to_unit(use_alloca)
+
+        if isinstance(mapping, Sequence) and not isinstance(mapping, ArrayAttr):
+            mapping = ArrayAttr(list(mapping))
+
+        if isinstance(alignment, int):
+            alignment = IntegerAttr(alignment, IntegerType(64))
+
+        super().__init__(
+            operands=[target],
+            properties={
+                "operands_to_promote": operands_to_promote,
+                "use_full_tile_buffers": use_full_tile_buffers,
+                "use_full_tiles_by_default": use_full_tiles_by_default,
+                "use_original_subview_size": use_original_subview_size,
+                "use_alloca": use_alloca,
+                "memory_space": memory_space,
+                "mapping": mapping,
+                "alignment": alignment,
+            },
+            result_types=[AnyOpType()],
+        )
+
+
+@irdl_op_definition
 class SelectOp(IRDLOperation):
     """
     See external [documentation](https://mlir.llvm.org/docs/Dialects/Transform/#transformselect-transformselectop).
@@ -921,6 +1004,7 @@ Transform = Dialect(
         YieldOp,
         TileOp,
         TileToForallOp,
+        PromoteOp,
         SelectOp,
         NamedSequenceOp,
         CastOp,
