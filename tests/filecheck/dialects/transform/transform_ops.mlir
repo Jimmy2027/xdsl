@@ -96,3 +96,33 @@
 
 // CHECK: %applied_registered_pass_opts = transform.apply_registered_pass "foo" with options = {foo = 1 : i32} to %to_apply_registered_pass : (!transform.op<"builtin.module">) -> !transform.op<"builtin.module">
 %applied_registered_pass_opts = transform.apply_registered_pass "foo" with options = {foo = 1 : i32} to %to_apply_registered_pass : (!transform.op<"builtin.module">) -> !transform.op<"builtin.module">
+// CHECK: %prom_basic = "transform.structured.promote"(%input) : (!transform.any_value) -> !transform.any_op
+%prom_basic = "transform.structured.promote"(%input) : (!transform.any_value) -> !transform.any_op
+
+// CHECK: %prom_alloca = "transform.structured.promote"(%input) <{use_alloca}> : (!transform.any_value) -> !transform.any_op
+%prom_alloca = "transform.structured.promote"(%input) <{use_alloca}> : (!transform.any_value) -> !transform.any_op
+
+// CHECK: %prom_opts = "transform.structured.promote"(%input) <{operands_to_promote = [0 : i64, 2 : i64], use_full_tile_buffers = [false, true], alignment = 32 : i64}> : (!transform.any_value) -> !transform.any_op
+%prom_opts = "transform.structured.promote"(%input) <{operands_to_promote = [0 : i64, 2 : i64], use_full_tile_buffers = [false, true], alignment = 32 : i64}> : (!transform.any_value) -> !transform.any_op
+
+// CHECK: "transform.annotate"(%any_op) <{name = "unit_attr"}> : (!transform.any_op) -> ()
+"transform.annotate"(%any_op) <{name = "unit_attr"}> : (!transform.any_op) -> ()
+
+%param_i64 = "test.op"() : () -> !transform.param<i64>
+// CHECK: "transform.annotate"(%any_op, %param_i64) <{name = "int_attr"}> : (!transform.any_op, !transform.param<i64>) -> ()
+"transform.annotate"(%any_op, %param_i64) <{name = "int_attr"}> : (!transform.any_op, !transform.param<i64>) -> ()
+
+%any_param = "test.op"() : () -> !transform.any_param
+// CHECK: "transform.annotate"(%any_op, %any_param) <{attr_name = "any_attr"}> : (!transform.any_op, !transform.any_param) -> ()
+"transform.annotate"(%any_op, %any_param) <{attr_name = "any_attr"}> : (!transform.any_op, !transform.any_param) -> ()
+
+// CHECK: %buf_basic = "transform.bufferization.one_shot_bufferize"(%input) : (!transform.any_value) -> !transform.any_op
+%buf_basic = "transform.bufferization.one_shot_bufferize"(%input) : (!transform.any_value) -> !transform.any_op
+
+// CHECK: %buf_memcpy = "transform.bufferization.one_shot_bufferize"(%input) <{memcpy_op = "linalg.copy"}> : (!transform.any_value) -> !transform.any_op
+%buf_memcpy = "transform.bufferization.one_shot_bufferize"(%input) <{memcpy_op = "linalg.copy"}> : (!transform.any_value) -> !transform.any_op
+
+// CHECK: %buf_analysis = "transform.bufferization.one_shot_bufferize"(%input) <{test_analysis_only = true}> : (!transform.any_value) -> !transform.any_op
+%buf_analysis = "transform.bufferization.one_shot_bufferize"(%input) <{test_analysis_only = true}> : (!transform.any_value) -> !transform.any_op
+
+

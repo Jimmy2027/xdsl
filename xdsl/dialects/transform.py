@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 
 from xdsl.dialects.builtin import (
     ArrayAttr,
+    BoolAttr,
     DenseArrayBase,
     DictionaryAttr,
     FunctionType,
@@ -825,6 +826,82 @@ class AnnotateOp(IRDLOperation):
 
 
 @irdl_op_definition
+class OneShotBufferizeOp(IRDLOperation):
+    """
+    See external documentation:
+    https://mlir.llvm.org/docs/Dialects/BufferizationTransformOps/#transformbufferizationone_shot_bufferize-buffersationoneshotbufferizeop
+
+    Mirrors MLIR's transform.bufferization.one_shot_bufferize operation.
+    """
+
+    name = "transform.bufferization.one_shot_bufferize"
+
+    target = operand_def(TransformHandleType)
+
+    # Properties corresponding to MLIR options. Types are kept general where
+    # MLIR uses dialect-specific enums.
+    function_boundary_type_conversion = opt_attr_def(Attribute)
+    allow_return_allocs_from_loops = opt_prop_def(BoolAttr)
+    allow_unknown_ops = opt_prop_def(BoolAttr)
+    bufferize_function_boundaries = opt_prop_def(BoolAttr)
+    dump_alias_sets = opt_prop_def(BoolAttr)
+    test_analysis_only = opt_prop_def(BoolAttr)
+    print_conflicts = opt_prop_def(BoolAttr)
+    check_parallel_regions = opt_prop_def(BoolAttr)
+    memcpy_op = opt_prop_def(StringAttr)
+
+    transformed = result_def(AnyOpType)
+
+    def __init__(
+        self,
+        target: SSAValue,
+        *,
+        function_boundary_type_conversion: Attribute | None = None,
+        allow_return_allocs_from_loops: bool | BoolAttr | None = None,
+        allow_unknown_ops: bool | BoolAttr | None = None,
+        bufferize_function_boundaries: bool | BoolAttr | None = None,
+        dump_alias_sets: bool | BoolAttr | None = None,
+        test_analysis_only: bool | BoolAttr | None = None,
+        print_conflicts: bool | BoolAttr | None = None,
+        check_parallel_regions: bool | BoolAttr | None = None,
+        memcpy_op: str | StringAttr | None = None,
+    ):
+        def to_bool_attr(v: bool | BoolAttr | None) -> BoolAttr | None:
+            if v is None:
+                return v
+            # Check if it's already an IntegerAttr with i1 type (BoolAttr)
+            if isinstance(v, IntegerAttr) and v.type == i1:
+                return v
+            # Convert bool to BoolAttr
+            if isinstance(v, bool):
+                return BoolAttr.from_bool(v)
+            return v
+
+        if isinstance(memcpy_op, str):
+            memcpy_op = StringAttr(memcpy_op)
+
+        super().__init__(
+            operands=[target],
+            properties={
+                "function_boundary_type_conversion": function_boundary_type_conversion,
+                "allow_return_allocs_from_loops": to_bool_attr(
+                    allow_return_allocs_from_loops
+                ),
+                "allow_unknown_ops": to_bool_attr(allow_unknown_ops),
+                "bufferize_function_boundaries": to_bool_attr(
+                    bufferize_function_boundaries
+                ),
+                "dump_alias_sets": to_bool_attr(dump_alias_sets),
+                "test_analysis_only": to_bool_attr(test_analysis_only),
+                "print_conflicts": to_bool_attr(print_conflicts),
+                "check_parallel_regions": to_bool_attr(check_parallel_regions),
+                "memcpy_op": memcpy_op,
+            },
+            result_types=[AnyOpType()],
+        )
+
+
+@irdl_op_definition
 class SelectOp(IRDLOperation):
     """
     See external [documentation](https://mlir.llvm.org/docs/Dialects/Transform/#transformselect-transformselectop).
@@ -1040,6 +1117,7 @@ Transform = Dialect(
         TileToForallOp,
         PromoteOp,
         AnnotateOp,
+        OneShotBufferizeOp,
         SelectOp,
         NamedSequenceOp,
         CastOp,

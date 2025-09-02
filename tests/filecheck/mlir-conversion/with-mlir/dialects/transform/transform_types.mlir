@@ -15,6 +15,7 @@ builtin.module attributes  {"transform.with_named_sequence"} {
     %8, %9 = "transform.structured.tile_using_forall"(%arg1) <{operandSegmentSizes = array<i32: 1, 0, 0, 0, 0>, "static_tile_sizes" = array<i64: 4, 32>}> : (!transform.op<"linalg.quantized_matmul">) -> (!transform.any_op, !transform.any_op)
     %10, %11, %12 = "transform.structured.tile_using_for"(%arg1) <{"scalable_sizes" = array<i1: false, false>, "static_sizes" = array<i64: 8, 8>}> : (!transform.op<"linalg.quantized_matmul">) -> (!transform.any_op, !transform.any_op, !transform.any_op)
     %13 = "transform.structured.promote"(%arg1) : (!transform.op<"linalg.quantized_matmul">) -> !transform.any_op
+    %14 = "transform.bufferization.one_shot_bufferize"(%arg1) <{test_analysis_only = true}> : (!transform.op<"linalg.quantized_matmul">) -> !transform.any_op
     transform.yield
   }
   "transform.sequence"() <{"failure_propagation_mode" = 1 : i32, operandSegmentSizes = array<i32: 0, 0>}> ({
@@ -22,6 +23,7 @@ builtin.module attributes  {"transform.with_named_sequence"} {
     %arg1_1 = "transform.select"(%arg0_1) <{"op_name" = "linalg.quantized_matmul"}> : (!transform.any_op) -> !transform.op<"linalg.quantized_matmul">
     %13, %14, %15 = "transform.structured.tile_using_for"(%arg1_1) <{"scalable_sizes" = array<i1: false, false>, "static_sizes" = array<i64: 8, 8>}> : (!transform.op<"linalg.quantized_matmul">) -> (!transform.any_op, !transform.any_op, !transform.any_op)
     %16 = "transform.structured.promote"(%arg1_1) : (!transform.op<"linalg.quantized_matmul">) -> !transform.any_op
+    %17 = "transform.bufferization.one_shot_bufferize"(%arg1_1) <{memcpy_op = "linalg.copy"}> : (!transform.op<"linalg.quantized_matmul">) -> !transform.any_op
     transform.yield
   }) : () -> ()
  %16 = "test.op"() : () -> !transform.any_op
