@@ -28,6 +28,7 @@ from xdsl.dialects.builtin import (
     SymbolRefAttr,
     UnitAttr,
     UnrankedMemRefType,
+    i8,
     i32,
     i64,
 )
@@ -961,6 +962,64 @@ class ReinterpretCastOp(IRDLOperation):
 
 
 @irdl_op_definition
+class ViewOp(IRDLOperation):
+    name = "memref.view"
+
+    source = operand_def(MemRefType)
+    byte_shift = operand_def(IndexType)
+    sizes = var_operand_def(IndexType)
+
+    result = result_def(MemRefType)
+
+    traits = traits_def(NoMemoryEffect())
+
+    assembly_format = (
+        "$source `[` $byte_shift `]` `` `[` $sizes `]` attr-dict "
+        "`:` type($source) `to` type($result)"
+    )
+
+    def verify_(self) -> None:
+        # Source must be a 1-D memref of i8 with identity layout (empty layout map).
+        assert isa(self.source.type, MemRefType)
+        src_ty = cast(MemRefType, self.source.type)
+
+        if src_ty.element_type != i8 or len(src_ty.shape.data) != 1:
+            raise VerifyException("memref.view source must be a 1-D memref of i8")
+
+        # Enforce empty layout map on source and result (identity layout, offset 0).
+        if not isinstance(src_ty.layout, NoneAttr):
+            raise VerifyException(
+                "memref.view source must have identity layout (no layout map)"
+            )
+
+        assert isa(self.result.type, MemRefType)
+        res_ty = cast(MemRefType, self.result.type)
+
+        if not isinstance(res_ty.layout, NoneAttr):
+            raise VerifyException(
+                "memref.view result must have identity layout (no layout map)"
+            )
+
+        # A dynamic size operand must be provided for each dynamic dim in result.
+        dyn_dims = sum(1 for d in res_ty.shape.data if d.data == -1)
+        if dyn_dims != len(self.sizes):
+            raise VerifyException(
+                "number of size operands must match number of dynamic dims in result type"
+            )
+
+    @staticmethod
+    def get(
+        source: SSAValue | Operation,
+        byte_shift: SSAValue | Operation,
+        sizes: Sequence[SSAValue | Operation],
+        result_type: MemRefType,
+    ) -> ViewOp:
+        return ViewOp.build(
+            operands=[source, byte_shift, sizes], result_types=[result_type]
+        )
+
+
+@irdl_op_definition
 class DmaStartOp(IRDLOperation):
     name = "memref.dma_start"
 
@@ -1109,6 +1168,7 @@ MemRef = Dialect(
         ExtractStridedMetaDataOp,
         ExtractAlignedPointerAsIndexOp,
         SubviewOp,
+        ViewOp,
         CastOp,
         MemorySpaceCastOp,
         ReinterpretCastOp,
