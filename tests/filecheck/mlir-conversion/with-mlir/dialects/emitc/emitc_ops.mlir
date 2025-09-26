@@ -10,6 +10,8 @@
 %ptr_i32 = "test.op"() : () -> !emitc.ptr<i32>
 %ptr_ptr_i32 = "test.op"() : () -> !emitc.ptr<!emitc.ptr<i32>>
 %lvalue_opaque = "test.op"() : () -> !emitc.lvalue<!emitc.opaque<"MyType">>
+%f32_val = "test.op"() : () -> f32
+%i32_val = "test.op"() : () -> i32
 
 //===----------------------------------------------------------------------===//
 // CallOpaqueOp
@@ -79,3 +81,15 @@ emitc.call_opaque "test" ()  : () -> ()
 // Test with opaque type
 %apply_opaque = emitc.apply "&"(%lvalue_opaque) : (!emitc.lvalue<!emitc.opaque<"MyType">>) -> !emitc.ptr<!emitc.opaque<"MyType">>
 // CHECK: {{%.*}} = emitc.apply "&"({{%.*}}) : (!emitc.lvalue<!emitc.opaque<"MyType">>) -> !emitc.ptr<!emitc.opaque<"MyType">>
+
+//===----------------------------------------------------------------------===//
+// AssignOp
+//===----------------------------------------------------------------------===//
+
+// Test assignment to f32 lvalue
+emitc.assign %f32_val : f32 to %lvalue_f32 : !emitc.lvalue<f32>
+// CHECK: emitc.assign {{%.*}} : f32 to {{%.*}} : <f32>
+
+// Test assignment to i32 lvalue
+emitc.assign %i32_val : i32 to %lvalue_i32 : !emitc.lvalue<i32>
+// CHECK: emitc.assign {{%.*}} : i32 to {{%.*}} : <i32>

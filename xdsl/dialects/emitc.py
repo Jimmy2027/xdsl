@@ -33,6 +33,7 @@ from xdsl.dialects.builtin import (
 )
 from xdsl.ir import (
     Attribute,
+    BlockArgument,
     Dialect,
     ParametrizedAttribute,
     SSAValue,
@@ -426,6 +427,34 @@ class EmitC_ApplyOp(IRDLOperation):
 
 
 @irdl_op_definition
+class EmitC_AssignOp(IRDLOperation):
+    """Assign operation"""
+
+    name = "emitc.assign"
+
+    var = operand_def(EmitC_LValueType)
+    value = operand_def(EmitCTypeConstr)
+
+    assembly_format = "$value `:` type($value) `to` $var `:` type($var) attr-dict"
+
+    def verify_(self) -> None:
+        if isinstance(self.var, BlockArgument):
+            raise VerifyException("cannot assign to block argument")
+
+        value_type = self.value.type
+        var_value_type = self.var.type.value_type
+
+        if var_value_type != value_type:
+            raise VerifyException(
+                "value type "
+                f"{value_type} does not match lvalue element type {var_value_type}"
+            )
+
+    def has_side_effects(self) -> bool:
+        return True
+
+
+@irdl_op_definition
 class EmitC_CallOpaqueOp(IRDLOperation):
     """
     The `emitc.call_opaque` operation represents a C++ function call. The callee can be an arbitrary non-empty string.
@@ -504,6 +533,7 @@ EmitC = Dialect(
     [
         EmitC_AddOp,
         EmitC_ApplyOp,
+        EmitC_AssignOp,
         EmitC_CallOpaqueOp,
     ],
     [
