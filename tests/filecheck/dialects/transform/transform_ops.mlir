@@ -105,16 +105,16 @@
 // CHECK: %prom_opts = "transform.structured.promote"(%input) <{operands_to_promote = [0 : i64, 2 : i64], use_full_tile_buffers = [false, true], alignment = 32 : i64}> : (!transform.any_value) -> !transform.any_op
 %prom_opts = "transform.structured.promote"(%input) <{operands_to_promote = [0 : i64, 2 : i64], use_full_tile_buffers = [false, true], alignment = 32 : i64}> : (!transform.any_value) -> !transform.any_op
 
-// CHECK: "transform.annotate"(%any_op) <{name = "unit_attr"}> : (!transform.any_op) -> ()
+// CHECK: transform.annotate %any_op "unit_attr" : !transform.any_op
 "transform.annotate"(%any_op) <{name = "unit_attr"}> : (!transform.any_op) -> ()
 
 %param_i64 = "test.op"() : () -> !transform.param<i64>
-// CHECK: "transform.annotate"(%any_op, %param_i64) <{name = "int_attr"}> : (!transform.any_op, !transform.param<i64>) -> ()
+// CHECK: transform.annotate %any_op "int_attr", %param_i64 : !transform.param<i64> : !transform.any_op
 "transform.annotate"(%any_op, %param_i64) <{name = "int_attr"}> : (!transform.any_op, !transform.param<i64>) -> ()
 
 %any_param = "test.op"() : () -> !transform.any_param
-// CHECK: "transform.annotate"(%any_op, %any_param) <{attr_name = "any_attr"}> : (!transform.any_op, !transform.any_param) -> ()
-"transform.annotate"(%any_op, %any_param) <{attr_name = "any_attr"}> : (!transform.any_op, !transform.any_param) -> ()
+// CHECK: transform.annotate %any_op "any_attr", %any_param : !transform.any_param : !transform.any_op
+"transform.annotate"(%any_op, %any_param) <{name = "any_attr"}> : (!transform.any_op, !transform.any_param) -> ()
 
 // CHECK: %buf_basic = "transform.bufferization.one_shot_bufferize"(%input) : (!transform.any_value) -> !transform.any_op
 %buf_basic = "transform.bufferization.one_shot_bufferize"(%input) : (!transform.any_value) -> !transform.any_op
@@ -125,4 +125,25 @@
 // CHECK: %buf_analysis = "transform.bufferization.one_shot_bufferize"(%input) <{test_analysis_only = true}> : (!transform.any_value) -> !transform.any_op
 %buf_analysis = "transform.bufferization.one_shot_bufferize"(%input) <{test_analysis_only = true}> : (!transform.any_value) -> !transform.any_op
 
+%to_pad = "test.op"() : () -> !transform.any_op
+// CHECK: %padded_basic, %pad_basic, %copy_basic = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+%padded_basic, %pad_basic, %copy_basic = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
 
+// CHECK: %padded_full, %pad_full, %copy_full = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, padding_values = [0.000000e+00 : f32, 0.000000e+00 : f32], padding_dimensions = [0 : i64, 1 : i64], nofold_flags = [1 : i64, 1 : i64]}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+%padded_full, %pad_full, %copy_full = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, padding_values = [0.000000e+00 : f32, 0.000000e+00 : f32], padding_dimensions = [0 : i64, 1 : i64], nofold_flags = [1 : i64, 1 : i64]}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+
+// CHECK: %padded_static, %pad_static, %copy_static = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, padding_dimensions = [0 : i64, 1 : i64], static_pad_to_multiple_of = array<i64: 8, 16>}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+%padded_static, %pad_static, %copy_static = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, padding_dimensions = [0 : i64, 1 : i64], static_pad_to_multiple_of = array<i64: 8, 16>}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+
+// CHECK: %padded_transpose, %pad_transpose, %copy_transpose = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, padding_dimensions = [0 : i64, 1 : i64], transpose_paddings = [[1 : i64, 0 : i64]]}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+%padded_transpose, %pad_transpose, %copy_transpose = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, padding_dimensions = [0 : i64, 1 : i64], transpose_paddings = [[1 : i64, 0 : i64]]}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+
+// CHECK: %padded_copy, %pad_copy, %copy_copy = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, copy_back_op = "linalg.copy"}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+%padded_copy, %pad_copy, %copy_copy = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, copy_back_op = "linalg.copy"}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+
+// CHECK: %padded_shapes, %pad_shapes, %copy_shapes = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, use_prescribed_tensor_shapes}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+%padded_shapes, %pad_shapes, %copy_shapes = "transform.structured.pad"(%to_pad) <{operandSegmentSizes = array<i32: 1, 0>, use_prescribed_tensor_shapes}> : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+
+%pad_mult = "test.op"() : () -> !transform.any_op
+// CHECK: %padded_dynamic, %pad_dynamic, %copy_dynamic = "transform.structured.pad"(%to_pad, %pad_mult) <{operandSegmentSizes = array<i32: 1, 1>, padding_dimensions = [0 : i64]}> : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+%padded_dynamic, %pad_dynamic, %copy_dynamic = "transform.structured.pad"(%to_pad, %pad_mult) <{operandSegmentSizes = array<i32: 1, 1>, padding_dimensions = [0 : i64]}> : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)

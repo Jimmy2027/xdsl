@@ -792,6 +792,188 @@ class PromoteOp(IRDLOperation):
 
 
 @irdl_op_definition
+class PadOp(IRDLOperation):
+    """
+    Pad the operations pointed to by the target handle using the provided options.
+
+    See external documentation:
+    https://mlir.llvm.org/docs/Dialects/Transform/#transformstructuredpad-transformpadop
+
+    Pads operations using the provided options. Returns handles to the padded op,
+    padding op ("tensor.pad"), and copy-back op.
+
+    To preserve tensor SSA use-def chains, the unpadded result is copied back to
+    the original destination tensor of the targeted op. The op that copies back
+    the result can be customized with copy_back_op:
+
+    * "bufferization.materialize_in_destination" (default)
+    * "linalg.copy"
+    * "none" (no copy back)
+    """
+
+    name = "transform.structured.pad"
+
+    target = operand_def(TransformHandleType)
+    pad_to_multiple_of = var_operand_def(TransformHandleType)
+
+    padding_values = opt_prop_def(ArrayAttr)
+    padding_dimensions = opt_prop_def(ArrayAttr)  # ArrayAttr[IntegerAttr] in MLIR
+    static_pad_to_multiple_of = opt_prop_def(DenseArrayBase.constr(i64))
+    nofold_flags = opt_prop_def(ArrayAttr)  # ArrayAttr[IntegerAttr] in MLIR
+    transpose_paddings = opt_prop_def(ArrayAttr)  # ArrayAttr[ArrayAttr[IntegerAttr]]
+    copy_back_op = opt_prop_def(StringAttr)
+    use_prescribed_tensor_shapes = opt_prop_def(UnitAttr)
+
+    padded = result_def(TransformHandleType)
+    pad = result_def(TransformHandleType)
+    copy = result_def(TransformHandleType)
+
+    irdl_options = [AttrSizedOperandSegments(as_property=True)]
+
+    def __init__(
+        self,
+        target: SSAValue,
+        *,
+        padding_values: ArrayAttr | Sequence[Attribute] | None = None,
+        padding_dimensions: ArrayAttr | Sequence[int] | None = None,
+        pad_to_multiple_of: Sequence[SSAValue] = (),
+        static_pad_to_multiple_of: DenseArrayBase[IntegerType]
+        | Sequence[int]
+        | None = None,
+        nofold_flags: ArrayAttr | Sequence[int] | None = None,
+        transpose_paddings: ArrayAttr | Sequence[Sequence[int]] | None = None,
+        copy_back_op: str | StringAttr | None = None,
+        use_prescribed_tensor_shapes: bool | UnitAttr | None = None,
+    ):
+        # Convert padding_values
+        if isinstance(padding_values, Sequence) and not isinstance(
+            padding_values, ArrayAttr
+        ):
+            padding_values = ArrayAttr(list(padding_values))
+
+        # Convert padding_dimensions (I64ArrayAttr in MLIR)
+        if isinstance(padding_dimensions, Sequence):
+            padding_dimensions = ArrayAttr(
+                [IntegerAttr(v, i64) for v in padding_dimensions]
+            )
+
+        # Convert static_pad_to_multiple_of (DenseI64ArrayAttr in MLIR)
+        if isinstance(static_pad_to_multiple_of, Sequence):
+            static_pad_to_multiple_of = DenseArrayBase.from_list(
+                i64, static_pad_to_multiple_of
+            )
+
+        # Convert nofold_flags (I64ArrayAttr in MLIR)
+        if isinstance(nofold_flags, Sequence):
+            nofold_flags = ArrayAttr([IntegerAttr(v, i64) for v in nofold_flags])
+
+        # Convert transpose_paddings (array of I64ArrayAttr in MLIR)
+        if transpose_paddings is not None and not isinstance(
+            transpose_paddings, ArrayAttr
+        ):
+            converted_paddings: list[Attribute] = []
+            for perm in transpose_paddings:
+                if isinstance(perm, Attribute):
+                    converted_paddings.append(perm)
+                else:
+                    # Convert sequence to ArrayAttr[IntegerAttr]
+                    converted_paddings.append(
+                        ArrayAttr([IntegerAttr(v, i64) for v in perm])
+                    )
+            transpose_paddings = ArrayAttr(converted_paddings)
+
+        # Convert copy_back_op
+        if isinstance(copy_back_op, str):
+            copy_back_op = StringAttr(copy_back_op)
+
+        # Convert use_prescribed_tensor_shapes
+        def to_unit(v: bool | UnitAttr | None) -> UnitAttr | None:
+            if isinstance(v, UnitAttr) or v is None:
+                return v
+            return UnitAttr() if v else None
+
+        use_prescribed_tensor_shapes = to_unit(use_prescribed_tensor_shapes)
+
+        super().__init__(
+            operands=[target, pad_to_multiple_of],
+            properties={
+                "padding_values": padding_values,
+                "padding_dimensions": padding_dimensions,
+                "static_pad_to_multiple_of": static_pad_to_multiple_of,
+                "nofold_flags": nofold_flags,
+                "transpose_paddings": transpose_paddings,
+                "copy_back_op": copy_back_op,
+                "use_prescribed_tensor_shapes": use_prescribed_tensor_shapes,
+            },
+            result_types=[
+                AnyOpType(),
+                AnyOpType(),
+                AnyOpType(),
+            ],
+        )
+
+    def verify_(self) -> None:
+        # Verify nofold_flags contains only 0/1
+        if self.nofold_flags is not None:
+            for attr in self.nofold_flags.data:
+                if isinstance(attr, IntegerAttr):
+                    val = attr.value.data
+                    if val not in (0, 1):
+                        raise VerifyException(
+                            f"expects nofold_flags to contain booleans (0/1), found {val}"
+                        )
+
+        # Verify padding_dimensions contains only positive integers
+        if self.padding_dimensions is not None:
+            for attr in self.padding_dimensions.data:
+                if isinstance(attr, IntegerAttr):
+                    val = attr.value.data
+                    if val < 0:
+                        raise VerifyException(
+                            f"expects padding_dimensions to contain positive integers, found {val}"
+                        )
+
+        # Verify pad_to_multiple_of size matches padding_dimensions
+        num_dynamic_pad = len(self.pad_to_multiple_of)
+        num_static_pad = 0
+        if self.static_pad_to_multiple_of is not None:
+            static_values = self.static_pad_to_multiple_of.get_values()
+            num_static_pad = len([v for v in static_values if v != 0])
+
+        total_pad = num_dynamic_pad + num_static_pad
+        if total_pad > 0 and self.padding_dimensions is not None:
+            num_padding_dims = len(self.padding_dimensions.data)
+            if total_pad != num_padding_dims:
+                raise VerifyException("expects as many multiples as padding_dimensions")
+
+        # Verify transpose_paddings are valid permutations
+        if self.transpose_paddings is not None:
+            for attr in self.transpose_paddings.data:
+                if isinstance(attr, ArrayAttr):
+                    perm_values: list[int] = []
+                    for inner_attr in attr.data:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                        if isinstance(inner_attr, IntegerAttr):
+                            perm_values.append(int(inner_attr.value.data))
+                    sequence = list(range(len(perm_values)))
+                    if sorted(perm_values) != sequence:
+                        raise VerifyException(
+                            f"expects transpose_paddings to be a permutation, found {perm_values}"
+                        )
+
+        # Verify copy_back_op is valid
+        if self.copy_back_op is not None:
+            valid_ops = [
+                "bufferization.materialize_in_destination",
+                "linalg.copy",
+                "none",
+            ]
+            if self.copy_back_op.data not in valid_ops:
+                raise VerifyException(
+                    f"invalid copy_back_op: {self.copy_back_op.data}, must be one of {valid_ops}"
+                )
+
+
+@irdl_op_definition
 class AnnotateOp(IRDLOperation):
     """
     See external documentation:
@@ -1116,6 +1298,7 @@ Transform = Dialect(
         TileOp,
         TileToForallOp,
         PromoteOp,
+        PadOp,
         AnnotateOp,
         OneShotBufferizeOp,
         SelectOp,
