@@ -292,6 +292,42 @@ class GetProducerOfOperandOp(IRDLOperation):
 
 
 @irdl_op_definition
+class GetOperandOp(IRDLOperation):
+    """
+    See external [documentation](https://mlir.llvm.org/docs/Dialects/Transform/#transformget_operand-transformgetoperandop).
+    """
+
+    name = "transform.get_operand"
+
+    raw_position_list = prop_def(DenseArrayBase)
+    is_inverted = opt_prop_def(UnitAttr)
+    is_all = opt_prop_def(UnitAttr)
+    target = operand_def(TransformHandleType)
+    result = result_def(TransformValueHandleType)
+
+    def __init__(
+        self,
+        target: SSAValue,
+        raw_position_list: Sequence[int] | DenseArrayBase,
+        is_inverted: bool = False,
+        is_all: bool = False,
+    ):
+        if isinstance(raw_position_list, Sequence):
+            raw_position_list = DenseArrayBase.from_list(
+                IntegerType(64), raw_position_list
+            )
+        super().__init__(
+            properties={
+                "raw_position_list": raw_position_list,
+                "is_inverted": UnitAttr() if is_inverted else None,
+                "is_all": UnitAttr() if is_all else None,
+            },
+            operands=[target],
+            result_types=[AnyValueType()],
+        )
+
+
+@irdl_op_definition
 class GetResultOp(IRDLOperation):
     """
     See external [documentation](https://mlir.llvm.org/docs/Dialects/Transform/#transformget_result-transformgetresultop).
@@ -1321,6 +1357,7 @@ Transform = Dialect(
         GetDefiningOp,
         GetParentOp,
         GetProducerOfOperandOp,
+        GetOperandOp,
         GetResultOp,
         GetTypeOp,
         IncludeOp,
