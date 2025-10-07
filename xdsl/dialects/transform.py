@@ -792,6 +792,43 @@ class PromoteOp(IRDLOperation):
 
 
 @irdl_op_definition
+class PromoteTensorOp(IRDLOperation):
+    """
+    Request a tensor value to live in a specific memory space after bufferization.
+
+    See external documentation:
+    https://mlir.llvm.org/docs/Dialects/Transform/#transformstructuredpromote_tensor-transformpromotetensorop
+
+    This operation indicates that the given tensor value should be promoted to
+    reside in a specific memory space after bufferization. The operation consumes
+    a transform value handle and produces a new transform value handle.
+
+    The optional `memory_space` attribute specifies the target memory space.
+    If not provided, the default memory space is used.
+
+    The result type matches the input tensor type (SameOperandsAndResultType trait).
+    """
+
+    name = "transform.structured.promote_tensor"
+
+    tensor = operand_def(TransformValueHandleType)
+    memory_space = opt_attr_def(Attribute)
+    promoted = result_def(TransformValueHandleType)
+
+    def __init__(
+        self,
+        tensor: SSAValue,
+        memory_space: Attribute | None = None,
+    ):
+        attributes = {} if memory_space is None else {"memory_space": memory_space}
+        super().__init__(
+            operands=[tensor],
+            attributes=attributes,
+            result_types=[tensor.type],
+        )
+
+
+@irdl_op_definition
 class PadOp(IRDLOperation):
     """
     Pad the operations pointed to by the target handle using the provided options.
@@ -1298,6 +1335,7 @@ Transform = Dialect(
         TileOp,
         TileToForallOp,
         PromoteOp,
+        PromoteTensorOp,
         PadOp,
         AnnotateOp,
         OneShotBufferizeOp,

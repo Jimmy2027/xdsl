@@ -105,6 +105,12 @@
 // CHECK: %prom_opts = "transform.structured.promote"(%input) <{operands_to_promote = [0 : i64, 2 : i64], use_full_tile_buffers = [false, true], alignment = 32 : i64}> : (!transform.any_value) -> !transform.any_op
 %prom_opts = "transform.structured.promote"(%input) <{operands_to_promote = [0 : i64, 2 : i64], use_full_tile_buffers = [false, true], alignment = 32 : i64}> : (!transform.any_value) -> !transform.any_op
 
+// CHECK: %promoted_tensor_basic = transform.structured.promote_tensor %input : (!transform.any_value) -> !transform.any_value
+%promoted_tensor_basic = transform.structured.promote_tensor %input : (!transform.any_value) -> !transform.any_value
+
+// CHECK: %promoted_tensor_memory = transform.structured.promote_tensor to 1 : i32 %input : (!transform.any_value) -> !transform.any_value
+%promoted_tensor_memory = transform.structured.promote_tensor to 1 : i32 %input : (!transform.any_value) -> !transform.any_value
+
 // CHECK: transform.annotate %any_op "unit_attr" : !transform.any_op
 "transform.annotate"(%any_op) <{name = "unit_attr"}> : (!transform.any_op) -> ()
 
