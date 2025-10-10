@@ -15,6 +15,7 @@ from xdsl.dialects.builtin import (
     IntegerAttr,
     ShapedType,
     TensorType,
+    UnitAttr,
     UnrankedTensorType,
     i64,
 )
@@ -26,7 +27,7 @@ from xdsl.dialects.utils.reshape_ops_utils import (
     ContiguousArrayOfIntArray,
     verify_reshape_like_types,
 )
-from xdsl.ir import Attribute, Dialect, Operation, SSAValue
+from xdsl.ir import Attribute, Dialect, Operation, Region, SSAValue
 from xdsl.irdl import (
     AnyAttr,
     AttrSizedOperandSegments,
@@ -36,14 +37,16 @@ from xdsl.irdl import (
     base,
     irdl_op_definition,
     operand_def,
+    opt_prop_def,
     prop_def,
+    region_def,
     result_def,
     traits_def,
     var_operand_def,
 )
 from xdsl.parser import Parser
 from xdsl.printer import Printer
-from xdsl.traits import NoMemoryEffect, Pure
+from xdsl.traits import IsTerminator, NoMemoryEffect, Pure
 from xdsl.utils.exceptions import VerifyException
 
 
@@ -722,6 +725,291 @@ class SplatOp(IRDLOperation):
             )
 
 
+@irdl_op_definition
+class YieldOp(IRDLOperation):
+    """
+    Yield a value from a region.
+
+    This operation is used to yield a single value from within a region. It
+    is used to create dynamically sized tensors (see `tensor.generate` and
+    `tensor.pad` ops).
+
+    https://mlir.llvm.org/docs/Dialects/TensorOps/#tensoryield-tensoryieldop
+    """
+
+    name = "tensor.yield"
+
+    value = operand_def(Attribute)
+
+    traits = traits_def(Pure(), IsTerminator())
+
+    assembly_format = "$value attr-dict `:` type($value)"
+
+    def __init__(self, value: SSAValue | Operation):
+        super().__init__(operands=[value])
+
+
+@irdl_op_definition
+class PadOp(IRDLOperation):
+    """
+    Tensor pad operation.
+
+    Pad the source tensor with given low and high padding config.
+
+    The result tensor dimensions are low[i] + dim[i] + high[i] for each
+    dimension i. The number of elements of low and high must match the
+    rank of the input tensor. They can be either a constant or a dynamic value.
+
+    The region of the tensor.pad operation returns the value to use for the
+    padding. The arguments of the region represent the index of the source
+    being accessed. There should be as many arguments as the rank of the
+    source tensor. The value yielded by the region is used as the value
+    of the view at the given position.
+
+    If nofold is set, the padding operation will not be folded away even
+    if the source type and the padded type have the same static shape.
+
+    https://mlir.llvm.org/docs/Dialects/TensorOps/#tensorpad-tensorpadop
+    """
+
+    name = "tensor.pad"
+
+    # Constant value used to denote dynamic padding values
+    # Same constant as in MLIR
+    DYNAMIC_INDEX: ClassVar[int] = -9223372036854775808
+
+    source = operand_def(TensorType)
+    low = var_operand_def(IndexType)
+    high = var_operand_def(IndexType)
+
+    static_low = prop_def(DenseArrayBase.constr(i64))
+    static_high = prop_def(DenseArrayBase.constr(i64))
+    nofold = opt_prop_def(UnitAttr)
+
+    region = region_def()
+
+    result = result_def(TensorType)
+
+    irdl_options = [AttrSizedOperandSegments(as_property=True)]
+
+    traits = traits_def(NoMemoryEffect())
+
+    def __init__(
+        self,
+        source: SSAValue | Operation,
+        low: Sequence[SSAValue],
+        high: Sequence[SSAValue],
+        static_low: Sequence[int] | DenseArrayBase,
+        static_high: Sequence[int] | DenseArrayBase,
+        result_type: TensorType[Attribute],
+        region: Region,
+        nofold: UnitAttr | None = None,
+        attributes: dict[str, Attribute] | None = None,
+    ):
+        if not isinstance(static_low, DenseArrayBase):
+            static_low = DenseArrayBase.from_list(i64, static_low)
+        if not isinstance(static_high, DenseArrayBase):
+            static_high = DenseArrayBase.from_list(i64, static_high)
+
+        properties: dict[str, Attribute] = {
+            "static_low": static_low,
+            "static_high": static_high,
+        }
+        if nofold is not None:
+            properties["nofold"] = nofold
+
+        super().__init__(
+            operands=[source, low, high],
+            result_types=[result_type],
+            properties=properties,
+            regions=[region],
+            attributes=attributes,
+        )
+
+    @classmethod
+    def parse(cls, parser: Parser) -> Self:
+        source_operand = parser.parse_unresolved_operand()
+
+        # Parse optional nofold attribute
+        nofold = None
+        if parser.parse_optional_keyword("nofold"):
+            nofold = UnitAttr()
+
+        # Parse low padding
+        parser.parse_keyword("low")
+        index = IndexType()
+        dyn_low, static_low_list = parse_dynamic_index_list_without_types(
+            parser, dynamic_index=cls.DYNAMIC_INDEX
+        )
+        dyn_low = parser.resolve_operands(dyn_low, (index,) * len(dyn_low), parser.pos)
+
+        # Parse high padding
+        parser.parse_keyword("high")
+        dyn_high, static_high_list = parse_dynamic_index_list_without_types(
+            parser, dynamic_index=cls.DYNAMIC_INDEX
+        )
+        dyn_high = parser.resolve_operands(
+            dyn_high, (index,) * len(dyn_high), parser.pos
+        )
+
+        # Parse region
+        region = parser.parse_region()
+
+        # Parse optional attributes
+        attributes = parser.parse_optional_attr_dict()
+
+        # Parse types
+        parser.parse_punctuation(":")
+        source_type = parser.parse_type()
+        parser.parse_keyword("to")
+        result_type = parser.parse_type()
+
+        source = parser.resolve_operand(source_operand, source_type)
+
+        static_low_attr = DenseArrayBase.from_list(i64, static_low_list)
+        static_high_attr = DenseArrayBase.from_list(i64, static_high_list)
+
+        result_type = cast(TensorType[Attribute], result_type)
+
+        return cls(
+            source,
+            dyn_low,
+            dyn_high,
+            static_low_attr,
+            static_high_attr,
+            result_type,
+            region,
+            nofold,
+            attributes,
+        )
+
+    def print(self, printer: Printer):
+        printer.print_string(" ")
+        printer.print_ssa_value(self.source)
+
+        # Print nofold if present
+        if self.nofold is not None:
+            printer.print_string(" nofold")
+
+        # Print low padding
+        printer.print_string(" low")
+        print_dynamic_index_list(
+            printer,
+            self.DYNAMIC_INDEX,
+            self.low,
+            self.static_low.get_values(),
+        )
+
+        # Print high padding
+        printer.print_string(" high")
+        print_dynamic_index_list(
+            printer,
+            self.DYNAMIC_INDEX,
+            self.high,
+            self.static_high.get_values(),
+        )
+
+        # Print region
+        printer.print_string(" ")
+        printer.print_region(self.region)
+
+        # Print attributes
+        printer.print_op_attributes(attributes=self.attributes)
+
+        # Print types
+        printer.print_string(" : ")
+        printer.print_attribute(self.source.type)
+        printer.print_string(" to ")
+        printer.print_attribute(self.result.type)
+
+    def verify_(self) -> None:
+        source_type = self.source.type
+        result_type = self.result.type
+
+        if not isinstance(source_type, TensorType) or not isinstance(
+            result_type, TensorType
+        ):
+            raise VerifyException("source and result must be TensorType")
+
+        source_shape = source_type.get_shape()
+        result_shape = result_type.get_shape()
+        rank = len(source_shape)
+
+        # Check that static_low and static_high have correct length
+        if len(self.static_low) != rank:
+            raise VerifyException(
+                f"static_low length ({len(self.static_low)}) must match source rank ({rank})"
+            )
+        if len(self.static_high) != rank:
+            raise VerifyException(
+                f"static_high length ({len(self.static_high)}) must match source rank ({rank})"
+            )
+
+        # Check result rank
+        if len(result_shape) != rank:
+            raise VerifyException(
+                f"result rank ({len(result_shape)}) must match source rank ({rank})"
+            )
+
+        # Verify region has correct number of block arguments
+        if len(self.region.blocks) != 1:
+            raise VerifyException("pad region must have exactly one block")
+
+        block = self.region.blocks[0]
+        if len(block.args) != rank:
+            raise VerifyException(
+                f"pad region block must have {rank} arguments, got {len(block.args)}"
+            )
+
+        # Check all block arguments are index type
+        for i, arg in enumerate(block.args):
+            if not isinstance(arg.type, IndexType):
+                raise VerifyException(
+                    f"pad region block argument {i} must be index type, got {arg.type}"
+                )
+
+        # Verify result type dimensions
+        static_low_vals = self.static_low.get_values()
+        static_high_vals = self.static_high.get_values()
+        for i in range(rank):
+            static_low_val = static_low_vals[i]
+            static_high_val = static_high_vals[i]
+
+            # If all are static, we can verify the dimension
+            if (
+                source_shape[i] >= 0
+                and static_low_val != self.DYNAMIC_INDEX
+                and static_high_val != self.DYNAMIC_INDEX
+            ):
+                expected_size = source_shape[i] + static_low_val + static_high_val
+                if result_shape[i] >= 0 and result_shape[i] != expected_size:
+                    raise VerifyException(
+                        f"result dimension {i} should be {expected_size}, got {result_shape[i]}"
+                    )
+
+    def get_mixed_pad(
+        self, static_attrs: DenseArrayBase, values: Sequence[SSAValue]
+    ) -> list[int | SSAValue]:
+        """Return a list of all static or dynamic padding values."""
+        result: list[int | SSAValue] = []
+        dynamic_idx = 0
+        for static_val in static_attrs.get_values():
+            if static_val == self.DYNAMIC_INDEX:
+                result.append(values[dynamic_idx])
+                dynamic_idx += 1
+            else:
+                result.append(static_val)
+        return result
+
+    def get_mixed_low_pad(self) -> list[int | SSAValue]:
+        """Return the low padding as a list of static/dynamic values."""
+        return self.get_mixed_pad(self.static_low, self.low)
+
+    def get_mixed_high_pad(self) -> list[int | SSAValue]:
+        """Return the high padding as a list of static/dynamic values."""
+        return self.get_mixed_pad(self.static_high, self.high)
+
+
 Tensor = Dialect(
     "tensor",
     [
@@ -735,8 +1023,10 @@ Tensor = Dialect(
         FromElementsOp,
         InsertOp,
         InsertSliceOp,
+        PadOp,
         ReshapeOp,
         SplatOp,
+        YieldOp,
     ],
     [],
 )

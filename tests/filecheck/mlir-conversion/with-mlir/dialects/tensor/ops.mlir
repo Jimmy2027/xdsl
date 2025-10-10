@@ -27,6 +27,41 @@
 %v = tensor.splat %s : tensor<8xf32>
 %v2 = tensor.splat %s[%index, %index1] : tensor<?x8x?xf32>
 
+// tensor.pad tests
+%arg0 = "test.op"() : () -> (tensor<3x4xf32>)
+%pad_value = "test.op"() : () -> (f32)
+%low = "test.op"() : () -> (index)
+%high = "test.op"() : () -> (index)
+
+// Static padding
+%padded_static = tensor.pad %arg0 low[1, 2] high[2, 3] {
+  ^bb0(%arg1: index, %arg2: index):
+    tensor.yield %pad_value : f32
+} : tensor<3x4xf32> to tensor<6x9xf32>
+
+// Dynamic padding
+%arg1 = "test.op"() : () -> (tensor<1x2x2x?xf32>)
+%padded_dynamic = tensor.pad %arg1 low[2, %low, 3, 3] high[3, 3, %high, 2] {
+  ^bb0(%arg2: index, %arg3: index, %arg4: index, %arg5: index):
+    tensor.yield %pad_value : f32
+} : tensor<1x2x2x?xf32> to tensor<6x?x?x?xf32>
+
+// Asymmetric padding
+%arg2 = "test.op"() : () -> (tensor<2x3xf32>)
+%ub0 = "test.op"() : () -> (index)
+%ub1 = "test.op"() : () -> (index)
+%padded_asym = tensor.pad %arg2 low[0, 0] high[%ub0, %ub1] {
+  ^bb0(%arg3: index, %arg4: index):
+    tensor.yield %pad_value : f32
+} : tensor<2x3xf32> to tensor<?x?xf32>
+
+// With nofold attribute
+%arg3 = "test.op"() : () -> (tensor<2x3xf32>)
+%padded_nofold = tensor.pad %arg3 nofold low[0, 0] high[0, 0] {
+  ^bb0(%arg4: index, %arg5: index):
+    tensor.yield %pad_value : f32
+} : tensor<2x3xf32> to tensor<2x3xf32>
+
 
 // CHECK:       module {
 // CHECK-NEXT:  %0 = tensor.empty() :  tensor<2x3xf32>
@@ -54,4 +89,29 @@
 // CHECK-NEXT:  %8 = "test.op"() : () -> f32
 // CHECK-NEXT:  %{{.*}} = tensor.splat %8 : tensor<8xf32>
 // CHECK-NEXT:  %{{.*}} = tensor.splat %8[%7#0, %7#1] : tensor<?x8x?xf32>
+// CHECK-NEXT:  %9 = "test.op"() : () -> tensor<3x4xf32>
+// CHECK-NEXT:  %10 = "test.op"() : () -> f32
+// CHECK-NEXT:  %11 = "test.op"() : () -> index
+// CHECK-NEXT:  %12 = "test.op"() : () -> index
+// CHECK-NEXT:  %{{.*}} = tensor.pad %9 low[1, 2] high[2, 3]  {
+// CHECK-NEXT:  ^bb0(%{{.*}}: index, %{{.*}}: index):
+// CHECK-NEXT:    tensor.yield %10 : f32
+// CHECK-NEXT:  } : tensor<3x4xf32> to tensor<6x9xf32>
+// CHECK-NEXT:  %13 = "test.op"() : () -> tensor<1x2x2x?xf32>
+// CHECK-NEXT:  %{{.*}} = tensor.pad %13 low[2, %11, 3, 3] high[3, 3, %12, 2]  {
+// CHECK-NEXT:  ^bb0(%{{.*}}: index, %{{.*}}: index, %{{.*}}: index, %{{.*}}: index):
+// CHECK-NEXT:    tensor.yield %10 : f32
+// CHECK-NEXT:  } : tensor<1x2x2x?xf32> to tensor<6x?x?x?xf32>
+// CHECK-NEXT:  %14 = "test.op"() : () -> tensor<2x3xf32>
+// CHECK-NEXT:  %15 = "test.op"() : () -> index
+// CHECK-NEXT:  %16 = "test.op"() : () -> index
+// CHECK-NEXT:  %{{.*}} = tensor.pad %14 low[0, 0] high[%15, %16]  {
+// CHECK-NEXT:  ^bb0(%{{.*}}: index, %{{.*}}: index):
+// CHECK-NEXT:    tensor.yield %10 : f32
+// CHECK-NEXT:  } : tensor<2x3xf32> to tensor<?x?xf32>
+// CHECK-NEXT:  %17 = "test.op"() : () -> tensor<2x3xf32>
+// CHECK-NEXT:  %{{.*}} = tensor.pad %17 nofold low[0, 0] high[0, 0]  {
+// CHECK-NEXT:  ^bb0(%{{.*}}: index, %{{.*}}: index):
+// CHECK-NEXT:    tensor.yield %10 : f32
+// CHECK-NEXT:  } : tensor<2x3xf32> to tensor<2x3xf32>
 // CHECK-NEXT: }
