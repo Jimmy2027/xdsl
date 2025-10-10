@@ -51,7 +51,12 @@ from xdsl.irdl import (
 )
 from xdsl.parser import Parser
 from xdsl.printer import Printer
-from xdsl.traits import IsolatedFromAbove, IsTerminator, SymbolOpInterface
+from xdsl.traits import (
+    IsolatedFromAbove,
+    IsTerminator,
+    NoTerminator,
+    SymbolOpInterface,
+)
 from xdsl.utils.exceptions import VerifyException
 from xdsl.utils.str_enum import StrEnum
 
@@ -1349,6 +1354,71 @@ class MatchOp(IRDLOperation):
         )
 
 
+@irdl_op_definition
+class ApplyPatternsOp(IRDLOperation):
+    """
+    Greedily applies patterns to the body of the targeted op.
+
+    See external [documentation](https://mlir.llvm.org/docs/Dialects/Transform/#transformapply_patterns-transformapplypatternsop).
+    """
+
+    name = "transform.apply_patterns"
+
+    target = operand_def(TransformHandleType)
+    apply_cse = opt_prop_def(UnitAttr)
+    max_iterations = opt_prop_def(IntegerAttr)
+    max_num_rewrites = opt_prop_def(IntegerAttr)
+    patterns = region_def()
+
+    assembly_format = "`to` $target $patterns attr-dict `:` type($target)"
+    irdl_options = [ParsePropInAttrDict()]
+    traits = traits_def(NoTerminator())
+
+    def __init__(
+        self,
+        target: SSAValue,
+        patterns: Region,
+        apply_cse: bool = False,
+        max_iterations: int | IntegerAttr | None = None,
+        max_num_rewrites: int | IntegerAttr | None = None,
+    ):
+        if max_iterations is None:
+            max_iterations = IntegerAttr(-1, IntegerType(64))
+        elif isinstance(max_iterations, int):
+            max_iterations = IntegerAttr(max_iterations, IntegerType(64))
+
+        if max_num_rewrites is None:
+            max_num_rewrites = IntegerAttr(-1, IntegerType(64))
+        elif isinstance(max_num_rewrites, int):
+            max_num_rewrites = IntegerAttr(max_num_rewrites, IntegerType(64))
+
+        super().__init__(
+            operands=[target],
+            properties={
+                "apply_cse": UnitAttr() if apply_cse else None,
+                "max_iterations": max_iterations,
+                "max_num_rewrites": max_num_rewrites,
+            },
+            regions=[patterns],
+        )
+
+
+@irdl_op_definition
+class ApplyMergeConsecutiveInsertExtractSlicePatternsOp(IRDLOperation):
+    """
+    Pattern descriptor for merging consecutive tensor.extract_slice/tensor.insert_slice ops.
+
+    See external [documentation](https://mlir.llvm.org/docs/Dialects/Tensor/TransformOps/#transformapply_patternstensormerge_consecutive_insert_extract_slice).
+    """
+
+    name = "transform.apply_patterns.tensor.merge_consecutive_insert_extract_slice"
+
+    assembly_format = "attr-dict"
+
+    def __init__(self):
+        super().__init__()
+
+
 Transform = Dialect(
     "transform",
     [
@@ -1380,6 +1450,8 @@ Transform = Dialect(
         NamedSequenceOp,
         CastOp,
         MatchOp,
+        ApplyPatternsOp,
+        ApplyMergeConsecutiveInsertExtractSlicePatternsOp,
     ],
     [
         # Types
