@@ -1419,6 +1419,53 @@ class ApplyMergeConsecutiveInsertExtractSlicePatternsOp(IRDLOperation):
         super().__init__()
 
 
+@irdl_op_definition
+class LoopUnrollOp(IRDLOperation):
+    """
+    Unroll the given loop with the given unroll factor.
+
+    Unrolls each loop associated with the given handle to have up to the given
+    number of loop body copies per iteration. If the unroll factor is larger
+    than the loop trip count, the latter is used as the unroll factor instead.
+
+    This operation ignores non-scf.for, non-affine.for ops and drops them
+    in the return. If all the operations referred to by the target operand
+    unroll properly, the transform succeeds. Otherwise the transform produces a
+    silenceable failure.
+
+    Does not return handles as the operation may result in the loop being
+    removed after a full unrolling.
+
+    See external documentation:
+    https://mlir.llvm.org/docs/Dialects/SCF/TransformOps/#transformloopunroll-transformloopunrollop
+    """
+
+    name = "transform.loop.unroll"
+
+    target = operand_def(TransformHandleType)
+    factor = prop_def(IntegerAttr[i64])
+
+    assembly_format = "$target attr-dict `:` type($target)"
+    irdl_options = [ParsePropInAttrDict()]
+
+    def __init__(
+        self,
+        target: SSAValue,
+        factor: int | IntegerAttr[IntegerType],
+    ):
+        if isinstance(factor, int):
+            factor = IntegerAttr(factor, i64)
+        super().__init__(
+            operands=[target],
+            properties={"factor": factor},
+        )
+
+    def verify_(self) -> None:
+        val = self.factor.value.data
+        if val <= 0:
+            raise VerifyException(f"expects factor to be positive, found {val}")
+
+
 Transform = Dialect(
     "transform",
     [
@@ -1452,6 +1499,7 @@ Transform = Dialect(
         MatchOp,
         ApplyPatternsOp,
         ApplyMergeConsecutiveInsertExtractSlicePatternsOp,
+        LoopUnrollOp,
     ],
     [
         # Types
