@@ -25,6 +25,7 @@ from xdsl.irdl import (
     ConstraintContext,
     IntConstraint,
     IRDLOperation,
+    ParsePropInAttrDict,
     VarConstraint,
     irdl_op_definition,
     operand_def,
@@ -143,7 +144,9 @@ class AllocTensorOp(IRDLOperation):
 
     tensor = result_def(T)
 
-    irdl_options = [AttrSizedOperandSegments(as_property=True)]
+    memory_space = opt_prop_def(Attribute)
+
+    irdl_options = [AttrSizedOperandSegments(as_property=True), ParsePropInAttrDict()]
 
     assembly_format = "`(` $dynamic_sizes `)` ( `copy` `(` $copy^ `)`)? (`size_hint` `=` $size_hint^)? attr-dict `:` type($tensor)"  # noqa E501
 
@@ -153,10 +156,12 @@ class AllocTensorOp(IRDLOperation):
         dynamic_sizes: Sequence[Operation | SSAValue] | None = None,
         copy: SSAValue | Operation | None = None,
         size_hint: SSAValue | Operation | None = None,
+        memory_space: Attribute | None = None,
     ):
         super().__init__(
             operands=(dynamic_sizes, copy, size_hint),
             result_types=(result_type,),
+            properties={"memory_space": memory_space} if memory_space else {},
         )
 
 

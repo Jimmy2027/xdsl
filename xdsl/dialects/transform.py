@@ -16,6 +16,7 @@ from xdsl.dialects.builtin import (
     SymbolRefAttr,
     UnitAttr,
     i1,
+    i32,
     i64,
 )
 from xdsl.dialects.func import FuncOpCallableInterface
@@ -36,6 +37,7 @@ from xdsl.ir import (
 from xdsl.irdl import (
     AttrSizedOperandSegments,
     IRDLOperation,
+    ParsePropInAttrDict,
     irdl_attr_definition,
     irdl_op_definition,
     operand_def,
@@ -894,7 +896,7 @@ class PadOp(IRDLOperation):
     target = operand_def(TransformHandleType)
     pad_to_multiple_of = var_operand_def(TransformHandleType)
 
-    padding_values = opt_prop_def(ArrayAttr)
+    padding_values = opt_prop_def(ArrayAttr[i32])
     padding_dimensions = opt_prop_def(ArrayAttr)  # ArrayAttr[IntegerAttr] in MLIR
     static_pad_to_multiple_of = opt_prop_def(DenseArrayBase.constr(i64))
     nofold_flags = opt_prop_def(ArrayAttr)  # ArrayAttr[IntegerAttr] in MLIR
@@ -1412,6 +1414,22 @@ class ApplyMergeConsecutiveInsertExtractSlicePatternsOp(IRDLOperation):
     """
 
     name = "transform.apply_patterns.tensor.merge_consecutive_insert_extract_slice"
+
+    assembly_format = "attr-dict"
+
+    def __init__(self):
+        super().__init__()
+
+
+@irdl_op_definition
+class ApplyCanonicalizationPatternsOp(IRDLOperation):
+    """
+    Greedily applies canonicalization patterns to the body of the targeted op.
+
+    See external [documentation](https://mlir.llvm.org/docs/Dialects/Transform/#transformapply_patternscanonicalization-transformapplycanonicalizationpatternsop).
+    """
+
+    name = "transform.apply_patterns.canonicalization"
 
     assembly_format = "attr-dict"
 
